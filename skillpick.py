@@ -335,6 +335,11 @@ def cmd_scan() -> dict:
     catalog = build_catalog()
     CATALOG_JSON.write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
     write_catalog_md(catalog)
+    try:
+        from dashboard import build_dashboard
+        print(f"[scan] dashboard 已写入 {build_dashboard()}")
+    except ImportError:
+        pass
     print(f"[scan] 共 {catalog['skill_count']} 个 skill")
     for cat, names in catalog["categories"].items():
         print(f"  {cat}: {len(names)}")
