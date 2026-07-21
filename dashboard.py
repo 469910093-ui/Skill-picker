@@ -116,25 +116,90 @@ PAGE = """<!DOCTYPE html>
 
 <div class="intent-wrap">
   <input id="intent" type="search" placeholder="输入你的意图，比如：我要做一份周报 / 帮我画个图表 / 写飞书文档…">
-  <div class="intent-hint">输入后即时给出候选 skills、描述与 AI 建议；同时过滤下方全部卡片。会话内的建议由 skill-picker 结合真实上下文给出，这里为本地近似。</div>
+  <div class="intent-hint">输入后即时给出候选 skills、描述与 AI 建议；同时按关联度过滤下方卡片。会话内的建议由 skill-picker 结合真实上下文给出，这里为本地近似。</div>
   <div id="reco"></div>
 </div>
 
+<div id="sections">__SECTIONS__</div>
+<div class="empty" id="empty">没有匹配的 skill</div>
+
 <div class="clusters">
-  <h2><span class="bang">!</span>相似 / 漂移聚簇（__NCLUSTER__ 组）— 建议人工确认后自行取舍，工具不代改</h2>
+  <h2><span class="bang">!</span>相似 / 漂移聚簇检查（__NCLUSTER__ 组）— 建议人工确认后自行取舍，工具不代改</h2>
   <div class="cluster-grid">__CLUSTERS__</div>
 </div>
-
-__SECTIONS__
-<div class="empty" id="empty">没有匹配的 skill</div>
 
 <script>
 const SKILLS = __DATA__;
 const STOP = ['我要','我想','帮我','请你','一下','一份','一个','需要','怎么','如何','用哪个','能不能','有没有','什么','skill','skills'];
 const stripStop = s => { STOP.forEach(w => { s = s.split(w).join(''); }); return s; };
-const norm = s => s.toLowerCase().replace(/[^a-z0-9\\u4e00-\\u9fff]+/g, '');
-const bigrams = s => { const r = new Set(); for (let i = 0; i < s.length - 1; i++) r.add(s.slice(i, i+2)); return r; };
-SKILLS.forEach(s => { s._t = norm(s.name + ' ' + s.desc); s._bg = bigrams(s._t); s._cat = norm(s.cat); });
+const norm = s => s.toLowerCase().replace(/[^a-z0-9\\u4e00-\\u9fff]+/g, ' ').replace(/\\s+/g, ' ').trim();
+const isCJK = ch => ch >= '\\u4e00' && ch <= '\\u9fff';
+
+// 分词：中文单字 + 中文二元组 + 英文/数字整词
+function tokenize(s) {
+  const toks = new Set();
+  for (const word of norm(s).split(' ')) {
+    if (!word) continue;
+    if (/^[a-z0-9]+$/.test(word)) { toks.add(word); continue; }
+    const chars = [...word];
+    for (let i = 0; i < chars.length; i++) {
+      if (isCJK(chars[i])) toks.add(chars[i]);
+      if (i + 1 < chars.length && isCJK(chars[i]) && isCJK(chars[i+1])) toks.add(chars[i] + chars[i+1]);
+      if (!isCJK(chars[i])) { // 混排里的英文片段
+        let j = i; while (j < chars.length && !isCJK(chars[j])) j++;
+        toks.add(chars.slice(i, j).join('')); i = j - 1;
+      }
+    }
+  }
+  return toks;
+}
+
+// 预处理字段 token + IDF（token 在越多 skill 里出现，权重越低）
+const DF = new Map();
+SKILLS.forEach(s => {
+  s._name = tokenize(s.name); s._desc = tokenize(s.desc); s._cat = norm(s.cat);
+  s._nt = norm(s.name); s._dt = norm(s.desc);
+  new Set([...s._name, ...s._desc]).forEach(t => DF.set(t, (DF.get(t) || 0) + 1));
+});
+const N = SKILLS.length;
+const idf = t => DF.has(t) ? Math.log(1 + N / DF.get(t)) : 0;
+
+// 中英近义词扩展：解决"中文意图 vs 英文描述"打不中的问题
+const SYN = {
+  '剪': 'cut edit editing clip trim 剪辑 剪片', '剪辑': 'edit editing cut clip capcut premiere',
+  '视频': 'video 影片 短片', '音频': 'audio 声音', '字幕': 'caption subtitle 转写',
+  '图表': 'chart plot graph 可视化', '画图': 'chart draw image', '图片': 'image picture photo 配图',
+  '周报': 'weekly report 汇报', '日报': 'daily report', '复盘': 'review retrospective',
+  '文档': 'doc docx document 飞书文档', '表格': 'sheet table bitable excel 电子表格',
+  '幻灯片': 'slides ppt pptx presentation deck', '演示': 'slides ppt presentation deck',
+  '会议': 'meeting minutes 纪要', '邮件': 'mail email', '日程': 'calendar schedule',
+  '地图': 'map poi 位置', '播客': 'podcast 音频', '翻译': 'translate translation',
+  '爬虫': 'crawl scrape fetch', '部署': 'deploy deployment 发布', '测试': 'test testing qa',
+  '海报': 'poster infographic 信息图', '信息图': 'infographic poster',
+  '写作': 'write writing 文章 文案', '文案': 'copy copywriting 写作 write',
+  '数据': 'data bigquery sql 分析', '分析': 'analysis analytics 数据',
+  '皮肤': 'theme 主题', '插件': 'plugin extension 扩展',
+};
+
+// 单字段得分：意图 token 的 IDF 加权命中率（近义词按 0.7 折价参与）
+function fieldScore(qw, fieldToks) {   // qw: [token, weight][]
+  let hitW = 0, totW = 0;
+  qw.forEach(([t, f]) => {
+    const w = Math.max(idf(t), 0.3) * (t.length >= 2 ? 1.6 : 1) * f;
+    totW += w;
+    if (fieldToks.has(t)) hitW += w;
+  });
+  return totW ? hitW / totW : 0;
+}
+
+function expandIntent(qToks) {         // -> [token, weight][]，含近义词
+  const out = new Map();
+  qToks.forEach(t => out.set(t, 1));
+  qToks.forEach(t => {
+    if (SYN[t]) for (const syn of tokenize(SYN[t])) if (!out.has(syn)) out.set(syn, 0.7);
+  });
+  return [...out.entries()];
+}
 
 function matchedRuns(intent, text) {  // 贪心找出意图中命中 skill 文本的连续片段（长度>=2）
   const runs = []; let i = 0;
@@ -152,35 +217,46 @@ const intentEl = document.getElementById('intent');
 const recoEl = document.getElementById('reco');
 const cards = [...document.querySelectorAll('.card')];
 const sections = [...document.querySelectorAll('section')];
+const sectionsBox = document.getElementById('sections');
+const originalOrder = [...sections];
 cards.forEach(c => c.addEventListener('click', () => c.classList.toggle('open')));
 
 intentEl.addEventListener('input', () => {
   const raw = intentEl.value.trim();
-  const q = norm(stripStop(raw)) || norm(raw);
-  // 1) 过滤卡片
+  const q = (norm(stripStop(raw)) || norm(raw)).replace(/ /g, '');
+  // 1) 过滤卡片：要求命中至少一个有区分度的意图词（长度>=2 或英文词）
+  const qWords = [...tokenize(q)].filter(t => t.length >= 2);
   cards.forEach(c => {
-    const hit = !q || c.dataset.text.includes(q) || [...bigrams(q)].some(g => c.dataset.text.includes(g));
+    const hit = !q || c.dataset.text.includes(q) || qWords.some(t => c.dataset.text.includes(t));
     c.style.display = hit ? '' : 'none';
   });
   let any = false;
+  const visCount = new Map();
   sections.forEach(s => {
-    const vis = [...s.querySelectorAll('.card')].some(c => c.style.display !== 'none');
-    s.style.display = vis ? '' : 'none'; any = any || vis;
+    const n = [...s.querySelectorAll('.card')].filter(c => c.style.display !== 'none').length;
+    visCount.set(s, n);
+    s.style.display = n ? '' : 'none'; any = any || n > 0;
   });
   document.getElementById('empty').style.display = any ? 'none' : 'block';
+  // 有意图时：命中最多的场景排最前；清空时恢复默认顺序
+  (q ? [...sections].sort((a, b) => visCount.get(b) - visCount.get(a)) : originalOrder)
+    .forEach(s => sectionsBox.appendChild(s));
 
   // 2) AI 建议面板
   if (q.length < 2) { recoEl.className = ''; recoEl.innerHTML = ''; return; }
-  const qb = bigrams(q);
+  const qToks = tokenize(q);
+  const qw = expandIntent(qToks);
   const scored = SKILLS.map(s => {
-    let hit = 0; qb.forEach(g => { if (s._bg.has(g)) hit++; });
-    let score = hit / Math.max(qb.size, 1);
-    if (s._t.includes(q)) score += 0.5;                                  // 整串命中加权
-    if (norm(s.name).split('').some((_, i, a) => q.includes(a.slice(i, i + 2).join('')) && a.length > i + 1)) score += 0.15;  // 名字命中
-    let catHit = 0; qb.forEach(g => { if (s._cat.includes(g)) catHit++; });
-    score += 0.05 * Math.min(catHit, 2);                                 // 场景弱加权
-    return { s, score };
-  }).filter(x => x.score > 0.15).sort((a, b) => b.score - a.score).slice(0, 4);
+    const ns = fieldScore(qw, s._name);              // 名称命中
+    const ds = fieldScore(qw, s._desc);              // 描述命中
+    let score = 0.5 * ns + 0.5 * ds;
+    if (ns > 0.08 && ds > 0.08) score *= 1.5;        // 交叉验证：名称+描述都命中才强推
+    if (s._nt.replace(/ /g, '').includes(q)) score += 0.4;   // 整串命中名称
+    else if (s._dt.replace(/ /g, '').includes(q)) score += 0.25; // 整串命中描述
+    let catHit = 0; qToks.forEach(t => { if (t.length >= 2 && s._cat.includes(t)) catHit++; });
+    score += 0.04 * Math.min(catHit, 2);             // 场景弱加权
+    return { s, score, ns, ds };
+  }).filter(x => x.score > 0.12).sort((a, b) => b.score - a.score).slice(0, 4);
 
   if (!scored.length) {
     recoEl.className = 'show';
@@ -190,8 +266,13 @@ intentEl.addEventListener('input', () => {
   const max = scored[0].score;
   recoEl.className = 'show';
   recoEl.innerHTML = scored.map((x, i) => {
-    const runs = matchedRuns(q, x.s._t);
-    const kws = runs.map(r => '<span class="kw">' + r + '</span>').join('');
+    const nameRuns = matchedRuns(q, x.s._nt.replace(/ /g, ''));
+    const descRuns = matchedRuns(q, x.s._dt.replace(/ /g, '')).filter(r => !nameRuns.includes(r));
+    const synHits = qw.filter(([t, f]) => f < 1 && (x.s._name.has(t) || x.s._desc.has(t)))
+                      .slice(0, 4).map(([t]) => '<span class="kw">近义·' + t + '</span>').join('');
+    let kws = nameRuns.map(r => '<span class="kw">名称·' + r + '</span>').join('') +
+              descRuns.map(r => '<span class="kw">描述·' + r + '</span>').join('') + synHits;
+    const cross = x.ns > 0.08 && x.ds > 0.08 ? '<span class="kw" style="color:var(--green);background:rgba(74,222,128,.1)">名称+描述交叉命中</span>' : '';
     return '<div class="reco-card' + (i === 0 ? ' best' : '') + '">' +
       '<div class="reco-rank">' + (i + 1) + '</div><div class="reco-body">' +
       '<div>' + (i === 0 ? '<span class="ai-badge">AI 建议</span>' : '') +
@@ -199,7 +280,7 @@ intentEl.addEventListener('input', () => {
       '<span class="badge host" style="background:' + x.s.color + '">' + x.s.hostLabel + '</span>' +
       (x.s.warn ? ' <span class="badge warn">⚠ ' + x.s.warn + '</span>' : '') + '</div>' +
       '<div class="reco-desc">' + x.s.desc + '</div>' +
-      '<div class="reco-why">匹配依据：' + (kws || '<span class="kw">语义近邻</span>') +
+      '<div class="reco-why">匹配依据：' + (kws || '<span class="kw">弱相关</span>') + cross +
       '　场景：' + x.s.cat + '</div>' +
       '<div class="scorebar"><i style="width:' + Math.round(100 * x.score / max) + '%"></i></div>' +
       (i === 0 ? '<div class="reco-note">仅为建议——最终请自行选择；会话内 skill-picker 会结合你的真实上下文重新给出候选。</div>' : '') +
