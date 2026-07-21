@@ -3,9 +3,11 @@
 设计原则（用户铁律）：
 1. skills 聚合聚类展示；
 2. 高度相似 / 同名漂移的 skills 圈成聚簇、红色感叹号标记，展示相似度与漂移；
-3. 意图输入框：模糊意图 -> 候选 skills + 描述 + AI 建议（本地近似打分；
-   会话内真正的上下文建议由 skill-picker meta-skill 给出）；
+3. 意图输入框：模糊意图 -> 候选 skills + 描述 + AI 建议；
 4. 只读：本工具永不修改任何 skill，仅展示与提醒。
+
+打分常量单一真相源：rules.json（与 matching.py / match CLI / meta-skill 共用），
+JS 是同构镜像，禁止在本文件手写 SYN/权重。
 
 无服务器、无外部资源、无第三方库。
 """
@@ -13,6 +15,8 @@
 import html
 import json
 from pathlib import Path
+
+import matching
 
 DATA_DIR = Path.home() / ".skill-picker"
 CATALOG_JSON = DATA_DIR / "catalog.json"
@@ -156,8 +160,9 @@ PAGE = """<!DOCTYPE html>
 
 <script>
 const SKILLS = __DATA__;
-const STOP = ['我要','我想','帮我','请你','一下','一份','一个','需要','怎么','如何','用哪个','能不能','有没有','什么','skill','skills'];
-const stripStop = s => { STOP.forEach(w => { s = s.split(w).join(''); }); return s; };
+const R = __RULES__;   // 单一真相源 rules.json（与 Python matching.py 共用）
+const W = R.weights;
+const stripStop = s => { R.stopwords.forEach(w => { s = s.split(w).join(''); }); return s; };
 const norm = s => s.toLowerCase().replace(/[^a-z0-9\\u4e00-\\u9fff]+/g, ' ').replace(/\\s+/g, ' ').trim();
 const isCJK = ch => ch >= '\\u4e00' && ch <= '\\u9fff';
 
@@ -193,53 +198,31 @@ SKILLS.forEach(s => {
 const N = SKILLS.length;
 const idf = t => DF.has(t) ? Math.log(1 + N / DF.get(t)) : 0;
 
-// 中英近义词扩展：解决"中文意图 vs 英文描述"打不中的问题
-const SYN = {
-  '剪': 'cut edit editing clip trim 剪辑 剪片', '剪辑': 'edit editing cut clip capcut premiere',
-  '视频': 'video 影片 短片', '音频': 'audio 声音', '字幕': 'caption subtitle 转写',
-  '图表': 'chart plot graph 可视化', '画图': 'chart draw image', '图片': 'image picture photo 配图',
-  '周报': 'weekly report 汇报', '日报': 'daily report', '复盘': 'review retrospective',
-  '文档': 'doc docx document 飞书文档', '表格': 'sheet table bitable excel 电子表格',
-  '幻灯片': 'slides ppt pptx presentation deck', '演示': 'slides ppt presentation deck',
-  '会议': 'meeting minutes 纪要', '邮件': 'mail email', '日程': 'calendar schedule',
-  '地图': 'map poi 位置', '播客': 'podcast 音频', '翻译': 'translate translation',
-  '爬虫': 'crawl scrape fetch', '部署': 'deploy deployment 发布', '测试': 'test testing qa',
-  '海报': 'poster infographic 信息图', '信息图': 'infographic poster',
-  // 设计：近义词优先 figma 等强信号；泛词 design/ui 权重更低，避免麦肯锡/周报抢榜
-  '设计': 'figma figjam mockup prototype 原型 视觉设计', '平面': 'figma graphic poster 海报 视觉设计',
-  '平面设计': 'figma figjam mockup graphic poster 视觉设计',
-  '原型': 'prototype mockup figma', '界面': 'figma mockup ui ux',
-  '写作': 'write writing 文章 文案', '文案': 'copy copywriting 写作 write',
-  '数据': 'data bigquery sql 分析', '分析': 'analysis analytics 数据',
-  '皮肤': 'theme 主题', '插件': 'plugin extension 扩展',
-};
-// 泛词近义：参与匹配但折价更狠
-const WEAK_SYN = new Set(['design', 'designer', 'ui', 'ux', 'image', 'data', 'write', 'analysis']);
+// 近义词/权重全部来自 R（rules.json 单源），与 Python 端同构
+const WEAK_SYN = new Set(R.weak_syn);
 
-// 单字段得分：意图 token 的 IDF 加权命中率
 function fieldScore(qw, fieldToks) {   // qw: [token, weight][]
   let hitW = 0, totW = 0;
   qw.forEach(([t, f]) => {
-    const w = Math.max(idf(t), 0.3) * (t.length >= 2 ? 1.6 : 1) * f;
+    const w = Math.max(idf(t), W.idf_floor) * (t.length >= 2 ? W.len2_boost : 1) * f;
     totW += w;
     if (fieldToks.has(t)) hitW += w;
   });
   return totW ? hitW / totW : 0;
 }
 
-function expandIntent(qToks) {         // -> [token, weight][]，含近义词
+function expandIntent(qToks, qCompact) {  // -> [token, weight][]，含近义词（与 Python 同构）
   const out = new Map();
   qToks.forEach(t => { if (t.length >= 2) out.set(t, 1); });
-  qToks.forEach(t => {
-    if (!SYN[t]) return;
-    for (const syn of tokenize(SYN[t], {query: true})) {
+  for (const key of Object.keys(R.syn)) {
+    if (!qToks.has(key) && !(qCompact && qCompact.includes(key))) continue;
+    for (const syn of tokenize(R.syn[key], {query: true})) {
       if (syn.length < 2 || out.has(syn)) continue;
-      out.set(syn, WEAK_SYN.has(syn) ? 0.35 : 0.85);
+      out.set(syn, WEAK_SYN.has(syn) ? W.weak_syn : W.syn);
     }
-  });
-  // 补一层弱近义（design），仅当用户原词是设计/平面时
-  if (qToks.has('设计') || qToks.has('平面') || qToks.has('平面设计')) {
-    for (const syn of ['design', 'designer', 'ui', 'ux'])
+  }
+  if (R.design_triggers.some(t => qToks.has(t) || (qCompact && qCompact.includes(t)))) {
+    for (const syn of R.design_fallback)
       if (!out.has(syn)) out.set(syn, 0.3);
   }
   return [...out.entries()];
@@ -286,10 +269,10 @@ intentEl.addEventListener('input', () => {
     return;
   }
   const qToks = tokenize(q, {query: true});
-  const qw = expandIntent(qToks);
-  // 场景名是否被意图点名（「设计」→「设计/Figma」）：该区整体置顶
+  const qw = expandIntent(qToks, q);
+  // 场景名是否被意图点名（「设计」→「设计/Figma」）：该区整体置顶（多标签全参与）
   const catPinned = new Set(
-    [...new Set(SKILLS.map(s => s.cat))].filter(cat => {
+    [...new Set(SKILLS.flatMap(s => s.cats))].filter(cat => {
       const cn = norm(cat).replace(/ /g, '');
       return cn.includes(q) || [...qToks].some(t => t.length >= 2 && cn.includes(t));
     })
@@ -298,27 +281,27 @@ intentEl.addEventListener('input', () => {
     const ns = fieldScore(qw, s._name);              // 名称命中
     const ds = fieldScore(qw, s._desc);              // 描述命中
     const ks = fieldScore(qw, s._kw);                // MD 正文关键词命中
-    let score = 0.50 * ns + 0.30 * ds + 0.20 * ks;   // 名称权重更高，减少描述里泛词抢榜
-    if (ns > 0.08 && ds > 0.08) score *= 1.5;
-    else if (ks > 0.1 && (ns > 0.08 || ds > 0.08)) score *= 1.2;
-    // 整串命中：名称强加分；描述仅当该词不常见（DF ≤ 12%）才加，避免「设计」泛词刷分
+    let score = W.name * ns + W.desc * ds + W.kw * ks;
+    if (ns > 0.08 && ds > 0.08) score *= W.cross;
+    else if (ks > 0.1 && (ns > 0.08 || ds > 0.08)) score *= W.kw_cross;
+    // 整串命中：名称强加分；描述仅当该词不常见才加，避免「设计」泛词刷分
     const qCompact = q.replace(/ /g, '');
-    if (s._nt.replace(/ /g, '').includes(qCompact)) score += 0.45;
+    if (s._nt.replace(/ /g, '').includes(qCompact)) score += W.name_substr;
     else if (s._dt.replace(/ /g, '').includes(qCompact)) {
       const dfRatio = (DF.get(qCompact) || 0) / Math.max(N, 1);
-      if (dfRatio <= 0.12) score += 0.2;
+      if (dfRatio <= W.desc_substr_max_df) score += W.desc_substr;
     }
-    if (catPinned.has(s.cat)) score += 0.35;         // 场景被点名：区内 skill 整体抬升
+    if (s.cats.some(c => catPinned.has(c))) score += W.cat_pin;  // 多标签任一被点名即抬升
     return { s, score, ns, ds };
   });
   const scoreMap = new Map(all.map(x => [x.s.name, x.score]));
-  const scored = all.filter(x => x.score > 0.15).sort((a, b) => b.score - a.score).slice(0, 4);
+  const scored = all.filter(x => x.score > W.min_score).sort((a, b) => b.score - a.score).slice(0, 4);
 
   // 过滤：以得分为准；文本命中仅作补充且要求长度≥2 的意图词
   const qWords = [...qToks].filter(t => t.length >= 2);
   const cScore = c => scoreMap.get(c.dataset.name) || 0;
   cards.forEach(c => {
-    const hit = cScore(c) > 0.15 || qWords.some(t => c.dataset.text.includes(t) && t.length >= 2);
+    const hit = cScore(c) > W.min_score || qWords.some(t => c.dataset.text.includes(t) && t.length >= 2);
     c.style.display = hit ? '' : 'none';
   });
   let any = false;
@@ -438,34 +421,17 @@ def _warn_maps(catalog: dict):
     return drifted, overlap
 
 
-def _merge_copies(skills: list[dict], drifted: set, overlap: dict) -> list[dict]:
-    """同一 skill 散在不同客户端的副本合并为一条，hosts 逐一保留。"""
-    groups: dict[str, list[dict]] = {}
-    for s in skills:
-        groups.setdefault(s["dir_name"].lower(), []).append(s)
-    merged = []
-    for key, copies in groups.items():
-        primary = max(copies, key=lambda c: (len(c["description"]), len(c.get("keywords", ""))))
-        merged.append({
-            "name": primary["name"],
-            "dir_name": primary["dir_name"],
-            "description": primary["description"],
-            "keywords": primary.get("keywords", ""),
-            "category": primary["category"],
-            "hosts": sorted({c["host"] for c in copies}),
-            "copies": [{"host": c["host"], "path": c["path"]} for c in copies],
-            "drift": key in drifted,
-            "overlap": max((overlap.get(c["path"], 0) for c in copies), default=0),
-        })
-    return merged
-
-
 def build_dashboard() -> Path:
     catalog = json.loads(CATALOG_JSON.read_text(encoding="utf-8"))
     skills = catalog["skills"]
+    rules = matching.load_rules()
     drifted, overlap = _warn_maps(catalog)
     clusters = _union_find_clusters(catalog)
-    merged = _merge_copies(skills, drifted, overlap)
+    # 合并逻辑复用共享引擎，展示层只补充 drift/overlap 标记
+    merged = matching.merge_copies(skills)
+    for m in merged:
+        m["drift"] = m["dir_name"].lower() in drifted
+        m["overlap"] = max((overlap.get(c["path"], 0) for c in m["copies"]), default=0)
 
     def warn_text(m):
         w = []
@@ -528,17 +494,23 @@ def build_dashboard() -> Path:
         sections.append(f"<section><h2>{html.escape(cat)}（{len(cards)}）</h2>"
                         f'<div class="grid">{"".join(cards)}</div></section>')
 
-    # 给 JS 的数据（同样是合并后的条目）
+    # 给 JS 的数据（同样是合并后的条目；cats 为多标签）
     js_data = []
     for m in merged:
         js_data.append({
             "name": m["name"], "desc": m["description"][:220], "cat": m["category"],
+            "cats": m.get("categories", [m["category"]]),
             "kw": m["keywords"][:300],
             "hosts": [[HOST_LABELS.get(h, (h, "#888"))[0], HOST_LABELS.get(h, (h, "#888"))[1]]
                       for h in m["hosts"]],
             "warn": warn_text(m),
         })
     data_json = json.dumps(js_data, ensure_ascii=False).replace("</", "<\\/")
+    rules_json = json.dumps({
+        "syn": rules["syn"], "weak_syn": rules["weak_syn"],
+        "design_triggers": rules["design_triggers"], "design_fallback": rules["design_fallback"],
+        "stopwords": rules["stopwords"], "weights": rules["weights"],
+    }, ensure_ascii=False).replace("</", "<\\/")
 
     stats = (f"{len(merged)} 个 skill（含多端副本共 {catalog['skill_count']} 份） · "
              f"{len(by_cat)} 个场景 · {len(clusters)} 组相似/漂移聚簇 · "
@@ -576,7 +548,8 @@ def build_dashboard() -> Path:
                 .replace("__CLUSTERS__", "".join(cluster_html) or
                          '<div style="color:var(--dim)">未发现相似或漂移的 skills。</div>')
                 .replace("__SECTIONS__", "".join(sections))
-                .replace("__DATA__", data_json))
+                .replace("__DATA__", data_json)
+                .replace("__RULES__", rules_json))
     DASHBOARD_HTML.write_text(page, encoding="utf-8")
     return DASHBOARD_HTML
 

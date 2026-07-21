@@ -6,24 +6,31 @@
 不管理数据，只读取已存在的事实（SKILL.md），自动聚类、暴露冗余、让用户决策。
 
 用法:
-  python skillpick.py scan       扫描所有 skill 目录，生成 catalog
-  python skillpick.py install    scan + 把 skill-picker meta-skill 装进宿主
-  python skillpick.py report     打印上次扫描的摘要
+  python skillpick.py scan            扫描所有 skill 目录，生成 catalog + 门禁
+  python skillpick.py check           同 scan，退出码 0=可信 / 2=门禁 FAIL
+  python skillpick.py match "意图"    共享打分引擎检索候选（--top N / --json）
+  python skillpick.py install         scan + 把 meta-skill 装进四宿主 + 工具自拷贝
+  python skillpick.py report          打印上次扫描的摘要
 """
 
 import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+import matching
 
 HOME = Path.home()
 DATA_DIR = HOME / ".skill-picker"
 CATALOG_JSON = DATA_DIR / "catalog.json"
 CATALOG_MD = DATA_DIR / "catalog.md"
+CONFIG_JSON = DATA_DIR / "config.json"
 SELF_NAME = "skill-picker"
+TOOL_FILES = ["skillpick.py", "matching.py", "dashboard.py", "rules.json"]
 
 # 扫描根目录 -> 宿主标签。存在才扫，不存在跳过。
 SCAN_ROOTS = [
@@ -48,7 +55,16 @@ DISCOVER_BASES = [
 ]
 PRUNE_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "venv", "dist", "build",
               "terminals", "agent-transcripts", ".tmp", "tmp"}
-CONFIG_JSON = DATA_DIR / "config.json"
+
+# meta-skill 安装目标：四宿主
+INSTALL_TARGETS = {
+    "cursor": HOME / ".cursor" / "skills" / SELF_NAME / "SKILL.md",
+    "claude-code": HOME / ".claude" / "skills" / SELF_NAME / "SKILL.md",
+    "codex": HOME / ".agents" / "skills" / SELF_NAME / "SKILL.md",
+    "openclaw": HOME / ".openclaw" / "skills" / SELF_NAME / "SKILL.md",
+}
+
+RULES = matching.load_rules()
 
 
 def load_scan_roots() -> list[tuple[Path, str]]:
@@ -62,42 +78,6 @@ def load_scan_roots() -> list[tuple[Path, str]]:
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             print(f"[warn] config.json 解析失败，忽略 extra_roots: {e}")
     return roots
-
-# meta-skill 的安装目标（MVP: Cursor + Claude Code）
-INSTALL_TARGETS = {
-    "cursor": HOME / ".cursor" / "skills" / SELF_NAME / "SKILL.md",
-    "claude-code": HOME / ".claude" / "skills" / SELF_NAME / "SKILL.md",
-}
-
-# 场景聚类规则：按顺序匹配，命中即归类（对 name + description 匹配，忽略大小写）
-CATEGORY_RULES = [
-    ("飞书/Lark 办公", ["lark", "飞书", "feishu", "bitable", "多维表格", "妙搭", "miaoda"]),
-    ("周报/复盘/数据分析", ["复盘", "周报", "review", "weekly", "campaign", "bigquery", " bq ",
-                            "增量", "归因", "gochina", "gosea", "gothai", "gojapan", "ka 分析",
-                            "poiid", "okr", "shutdown", "工作汇报", "日报", "月报"]),
-    ("PPT/演示", ["ppt", "slides", "presentation", "幻灯片", "deck", "演讲", "slide deck", "分享稿"]),
-    ("图表/可视化", ["chart", "antv", "g2", "g6", "s2", "可视化", "infographic", "信息图",
-                     "visualization", "whiteboard", "画板", "diagram", "xrd", "图表"]),
-    ("视频/图像/创意", ["video", "短剧", "storyboard", "分镜", "manim", "hyperframes", "图片",
-                        "image", "seedance", "即梦", "cowart", "生成图", "canvas"]),
-    ("写作/内容运营", ["写作", "文章", "爆款", "文案", "小红书", "公众号", "咪蒙", "viral",
-                       "内容 ip", "自媒体", "notebooklm", "解读", "播客", "digest"]),
-    # 设计类只用强特征词，禁止裸 "设计/design/界面"（会把百度地图、周报、麦肯锡等误分进来）
-    ("设计/Figma", ["figma", "figjam", "design system", "code connect", "mockup",
-                     "prototype", "原型设计", "ui 设计", "ux 设计", "视觉设计"]),
-    ("Notion", ["notion"]),
-    ("云/AWS/运维", ["aws", "bedrock", "lambda", "cloudformation", "cdk", "iam", "datadog",
-                     "serverless", "amplify", "ecs", "s3", "dynamodb", "boto3"]),
-    ("Agent/开发工具链", ["cursor", "skill", "hook", "rule", "sdk", "subagent", "plan mode",
-                          "worktree", "tdd", "debugging", "code review", "pr", "statusline",
-                          "claude", "codex", "session", "brainstorm", "loop"]),
-    ("出行/电商业务", ["trip.com", "酒店", "hotel", "机票", "flight", "火车票", "train",
-                       "接送机", "transfer", "跟团游", "tor", "宠物", "抖音", "地图", "map",
-                       "玩乐", "景点", "baidu-ai-map", "百度地图"]),
-]
-FALLBACK_CATEGORY = "其他"
-
-OVERLAP_THRESHOLD = 0.50  # 描述 bigram Jaccard 相似度阈值
 
 
 # ---------------------------------------------------------------- 扫描与解析
@@ -131,11 +111,7 @@ def parse_frontmatter(text: str) -> dict:
 
 
 def extract_keywords(text: str) -> str:
-    """从 SKILL.md 正文提炼关键词：标题、加粗短语、行内代码名。
-
-    扫描时本来就已全文读取（为算 hash），此步零额外 IO；
-    产出写入 catalog 供匹配加权，长度上限 400 字符。
-    """
+    """从 SKILL.md 正文提炼关键词：标题、加粗短语、行内代码名（≤400 字符）。"""
     body = text
     if body.lstrip().startswith("---"):
         parts = body.lstrip().split("---", 2)
@@ -196,11 +172,15 @@ def scan_skills() -> list[dict]:
             name = (fm.get("name") or skill_md.parent.name).strip()
             if name == SELF_NAME:
                 continue  # 不索引自己
+            desc = (fm.get("description") or "").strip()
+            primary, labels = matching.categorize(name, desc, RULES)
             skills.append({
                 "name": name,
                 "dir_name": skill_md.parent.name,
-                "description": (fm.get("description") or "").strip(),
+                "description": desc,
                 "keywords": extract_keywords(text),
+                "category": primary,
+                "categories": labels,
                 "path": str(skill_md),
                 "host": host,
                 "root": str(root),
@@ -221,6 +201,15 @@ def jaccard(a: str, b: str) -> float:
     if not ga or not gb:
         return 0.0
     return len(ga & gb) / len(ga | gb)
+
+
+def _plugin_family(path_str: str) -> tuple | None:
+    """同一插件家族（marketplace/官方套件）内部的相似是正常分工，不算重叠。"""
+    parts = tuple(p.lower() for p in Path(path_str).parts)
+    if "plugins" in parts:
+        i = parts.index("plugins")
+        return parts[:i + 3] if len(parts) > i + 2 else parts[:i + 1]
+    return None
 
 
 def find_duplicates(skills: list[dict]) -> dict:
@@ -254,6 +243,8 @@ def find_duplicates(skills: list[dict]) -> dict:
             "copies": [{"path": g["path"], "host": g["host"], "sha256": g["sha256"]} for g in group],
         })
 
+    # 重叠检测去噪：仅同主分类内比较；同插件家族内部跳过
+    threshold = RULES["overlap_threshold"]
     overlaps = []
     for i in range(len(skills)):
         for j in range(i + 1, len(skills)):
@@ -262,8 +253,13 @@ def find_duplicates(skills: list[dict]) -> dict:
                 continue
             if len(a["description"]) < 20 or len(b["description"]) < 20:
                 continue
+            if not (set(a["categories"]) & set(b["categories"])):
+                continue
+            fa, fb = _plugin_family(a["path"]), _plugin_family(b["path"])
+            if fa is not None and fa == fb:
+                continue
             score = jaccard(a["description"], b["description"])
-            if score >= OVERLAP_THRESHOLD:
+            if score >= threshold:
                 overlaps.append({
                     "a": {"name": a["name"], "path": a["path"]},
                     "b": {"name": b["name"], "path": b["path"]},
@@ -289,13 +285,8 @@ def discover_all_skill_files() -> list[Path]:
 
 
 def run_gates(catalog: dict) -> list[dict]:
-    """三道强制门禁：G1 覆盖率（全）/ G2 解析质量（准）/ G3 漂移提醒。
-
-    G1 不通过意味着 catalog 不完整、匹配结果不可信，必须处理
-    （把未覆盖目录加入 ~/.skill-picker/config.json 的 extra_roots，或报 issue）。
-    """
-    # 用字面路径比较：skills 目录里常见符号链接（如指向 awesome-claude-skills 仓库），
-    # resolve 会把链接解析到根目录之外，造成覆盖误报
+    """四道强制门禁：G1 覆盖率 / G2 解析质量 / G3 漂移提醒 / G4 匹配黄金用例。"""
+    # 用字面路径比较：skills 目录里常见符号链接，resolve 会解析到根目录之外造成误报
     roots = [os.path.normcase(str(r)) for r, _ in load_scan_roots() if r.is_dir()]
 
     def covered(p: Path) -> bool:
@@ -331,6 +322,20 @@ def run_gates(catalog: dict) -> list[dict]:
         "items": drifted,
         "action": "" if not drifted else "在「理技能」tab 查看差异，确认后自行合并（工具不代改）",
     })
+
+    # G4：匹配质量黄金用例（期望 skill 未安装则跳过；装了却打不中 = FAIL）
+    index = matching.build_index(catalog["skills"], RULES)
+    golden = matching.run_golden(index, RULES)
+    failed = [g for g in golden if g["status"] == "fail"]
+    skipped = [g for g in golden if g["status"] == "skip"]
+    gates.append({
+        "id": "G4", "name": "匹配黄金用例",
+        "status": "pass" if not failed else "fail",
+        "detail": f"{len(golden)} 条用例：{len(golden) - len(failed) - len(skipped)} 过 / "
+                  f"{len(failed)} 败 / {len(skipped)} 跳过",
+        "items": [f"{g['query']} -> {g['detail']}" for g in failed[:10]],
+        "action": "" if not failed else "匹配引擎回归：检查 rules.json 的 syn/权重或新装 skill 描述",
+    })
     return gates
 
 
@@ -344,28 +349,10 @@ def print_gates(gates: list[dict]) -> None:
             print(f"    => {g['action']}")
 
 
-# ---------------------------------------------------------------- 聚类
-
-def categorize(skill: dict) -> str:
-    name = skill["name"].lower()
-    # 名称强路由：避免 figma-* 被描述里的 review/create 等词误分到周报
-    if name.startswith("figma-") or "figjam" in name:
-        return "设计/Figma"
-    if name.startswith("aws-") or name in {"amazon-bedrock", "signing-in-to-aws"}:
-        return "云/AWS/运维"
-    haystack = f"{skill['name']} {skill['description']}".lower()
-    for category, keywords in CATEGORY_RULES:
-        if any(kw in haystack for kw in keywords):
-            return category
-    return FALLBACK_CATEGORY
-
-
 # ---------------------------------------------------------------- 输出
 
 def build_catalog() -> dict:
     skills = scan_skills()
-    for s in skills:
-        s["category"] = categorize(s)
     duplicates = find_duplicates(skills)
     categories: dict[str, list] = {}
     for s in skills:
@@ -380,12 +367,14 @@ def build_catalog() -> dict:
 
 
 def write_catalog_md(catalog: dict) -> None:
+    """瘦身版 catalog：给 agent 读的只有 name/desc/分类/宿主/路径；keywords 留在 JSON。"""
     lines = [
         "# 本机 Skills Catalog",
         "",
         f"生成时间: {catalog['generated_at']}  |  共 {catalog['skill_count']} 个 skill",
         "",
-        "> 由 skill-picker 自动生成。刷新: `python skillpick.py scan`",
+        "> 由 skill-picker 自动生成。刷新: `python ~/.skill-picker/skillpick.py scan`",
+        "> 检索候选请优先用: `python ~/.skill-picker/skillpick.py match \"意图\" --json`",
         "",
     ]
     for g in catalog.get("gates", []):
@@ -397,16 +386,20 @@ def write_catalog_md(catalog: dict) -> None:
             if g["status"] != "pass":
                 lines.append(f"  - `{it}`")
     lines.append("")
+
+    merged = matching.merge_copies(catalog["skills"])
     by_cat: dict[str, list[dict]] = {}
-    for s in catalog["skills"]:
-        by_cat.setdefault(s["category"], []).append(s)
+    for m in merged:
+        by_cat.setdefault(m["category"], []).append(m)
     for cat in sorted(by_cat):
         lines.append(f"## {cat}（{len(by_cat[cat])}）")
         lines.append("")
-        for s in sorted(by_cat[cat], key=lambda x: x["name"].lower()):
-            desc = s["description"][:160] + ("…" if len(s["description"]) > 160 else "")
-            lines.append(f"- **{s['name']}** `[{s['host']}]` — {desc}")
-            lines.append(f"  - 路径: `{s['path']}`")
+        for m in sorted(by_cat[cat], key=lambda x: x["name"].lower()):
+            desc = m["description"][:160] + ("…" if len(m["description"]) > 160 else "")
+            hosts = "/".join(m["hosts"])
+            lines.append(f"- **{m['name']}** `[{hosts}]` — {desc}")
+            for c in m["copies"]:
+                lines.append(f"  - `[{c['host']}]` {c['path']}")
         lines.append("")
 
     dup = catalog["duplicates"]
@@ -433,74 +426,93 @@ def write_catalog_md(catalog: dict) -> None:
     CATALOG_MD.write_text("\n".join(lines), encoding="utf-8")
 
 
+# ---------------------------------------------------------------- meta-skill
+
 META_SKILL_TEMPLATE = """---
 name: skill-picker
-description: 本机 skills 路由器。当用户想不起某个 skill 的名字、不确定该用哪个 skill、
-  想知道本机装了哪些 skills、多个相似 skills 不知道选哪个，或者说"帮我选个 skill"、
-  "有没有 skill 能做 X"、"skill 太多了"、"用哪个 skill 做周报/PPT/图表/飞书文档"
-  之类的模糊意图时使用。读取本地 skills catalog，给出 2-4 个候选并让用户自己选择。
+description: >-
+  Use when 用户想不起某个 skill 的名字、不确定该用哪个 skill、
+  询问"有没有 / 用哪个 skill 能做 X"、想知道本机装了哪些 skills，
+  或在多个相似 skills 之间犹豫不决时使用。
+  用户已明确点名某个具体 skill、或任务本身与 skill 选择无关时不要使用。
 ---
 
 # skill-picker：本机 skills 路由器
 
+## Overview
+
+读取本机 skills catalog（由扫描器生成、带四道门禁），用共享打分引擎给出 2-4 个候选，
+标注 AI 推荐但**由用户点选**，选定后才执行对应 SKILL.md。只读，不改任何 skill。
+
+## When NOT to use
+
+- 用户已点名具体 skill（如「用 gochina-weekly-review 跑周报」）→ 直接用那个 skill
+- 普通编码/问答任务，与「选哪个 skill」无关
+- 被作为 subagent 派发执行具体任务时
+
 ## 工作流程
 
-1. 读取 catalog（本机 skills 索引，已按场景分组并标注重复）:
-   `{catalog_md}`
-   如果该文件不存在或超过 7 天未更新，先运行刷新命令（见下方）再读取。
-   **门禁检查**：catalog 开头如有「G1 覆盖率 FAIL」，说明本机存在未被索引的 skills，
+1. **必须先跑共享检索命令**（与 dashboard 同一引擎，禁止凭记忆翻 catalog）：
+
+   ```
+   python ~/.skill-picker/skillpick.py match "<用户意图原话>" --top 4 --json
+   ```
+
+   命令不存在或报错 → 先跑 `python ~/.skill-picker/skillpick.py scan` 再重试。
+
+2. **门禁检查**：输出的 gates 中若 G1 覆盖率 FAIL，说明本机存在未被索引的 skills，
    匹配结果不完整——必须提醒用户，并给出把未覆盖目录加入
    `~/.skill-picker/config.json` 的 `extra_roots` 的具体写法，然后重新 scan。
 
-2. 根据用户意图，在 catalog 中找出最匹配的 **2-4 个候选 skill**。
-   匹配依据是各 skill 的 description 与场景分类，不要只靠名字猜。
+3. **给出 AI 建议，但必须让用户选择**：结合会话上下文（用户原话、工作区、最近文件）
+   把推荐项放第一个选项并标「推荐」+ 一句话理由；其余按分数排列。
+   用宿主提问工具（Cursor: AskQuestion；Claude Code: AskUserQuestion；
+   其他宿主列编号选项等用户回答）。候选之间若有「同名漂移」或「功能重叠」必须点明。
 
-3. **给出 AI 建议，但必须让用户选择，不要替用户决定**。
-   结合当前会话的真实上下文（用户原话、工作区、最近讨论的文件与任务）从候选中
-   选出一个推荐项，放在第一个选项并标注「推荐」+ 一句话理由；其余候选按匹配度排列。
-   使用宿主提供的提问工具（Cursor: AskQuestion；Claude Code: AskUserQuestion；
-   无提问工具的宿主则在回复中列出编号选项等待用户回答）。每个候选给一行中文说明：
-   它是干什么的、和其他候选的区别。如果 catalog 显示候选之间存在"同名漂移"或
-   "功能重叠"，要明确提示用户。
+4. 用户选定后，读取该 skill 的 SKILL.md（路径在 match 输出里），严格照做。
 
-4. 用户选定后，读取该 skill 的 SKILL.md（路径在 catalog 中），并严格按其内容执行。
+5. 无匹配（match 返回空）→ 直说「本机没有对应 skill」，不要硬凑。
 
-5. 如果没有任何匹配的 skill，直接告诉用户"本机没有对应 skill"，
-   不要硬凑，可建议用户直接描述需求由 agent 正常处理。
+## Quick Reference
+
+| 命令 | 用途 |
+|---|---|
+| `python ~/.skill-picker/skillpick.py match "意图" --top 4 --json` | 检索候选（第一步必跑） |
+| `python ~/.skill-picker/skillpick.py scan` | 刷新 catalog（新装 skill 后 / 超 7 天） |
+| `python ~/.skill-picker/skillpick.py check` | 四道门禁体检（退出码 2=不可信） |
+| `~/.skill-picker/catalog.md` | 人读/兜底用瘦身索引 |
 
 ## 只读铁律（不可违反）
 
-- skill-picker 的职责仅限**展示、比对、提醒、路由**。
-- **永远不要**因为发现"同名漂移"或"功能重叠"就去修改、合并、移动或删除任何
-  skill 文件——只在候选说明里提醒用户。用户如果明确要求合并，那是另一个独立任务，
-  需用户逐项确认后才能动手，且不属于本 skill 的自动行为。
+- 职责仅限**展示、比对、提醒、路由**。
+- **永远不要**因为发现漂移/重叠就修改、合并、移动、删除任何 skill 文件。
+  用户明确要求清理属于独立任务，需逐项确认后另行执行。
 
-## 刷新 catalog
+## Common Mistakes
 
-```
-python "{script_path}" scan
-```
-
-## 关键事实
-
-- catalog 覆盖的扫描目录: {roots}
-- 纯本地，无服务器，无外部 API。
-- catalog JSON 版（含完整字段）: `{catalog_json}`
+| 念头 | 纠正 |
+|---|---|
+| 「意图很明显，直接替用户选吧」 | 必须弹选项让用户点选，推荐≠代选 |
+| 「catalog 我大概记得，不用跑命令」 | 必须跑 match CLI，凭记忆排序=页面与会话两套结果 |
+| 「发现两份重复，顺手合并掉」 | 只读铁律：只提醒，不动手 |
+| 「没找到匹配，挑个最接近的凑数」 | 直说没有，让用户正常描述需求 |
+| 「G1 FAIL 但先不管，继续推荐」 | 覆盖不全=结果不可信，必须先提醒处理 |
 """
 
 
 def install_meta_skill() -> None:
-    roots = ", ".join(str(r) for r, _ in SCAN_ROOTS if r.is_dir())
-    content = META_SKILL_TEMPLATE.format(
-        catalog_md=CATALOG_MD,
-        catalog_json=CATALOG_JSON,
-        script_path=Path(__file__).resolve(),
-        roots=roots,
-    )
+    # 工具自拷贝到 ~/.skill-picker/，meta-skill 全部用 ~ 路径，跨机器可用
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    src_dir = Path(__file__).resolve().parent
+    for f in TOOL_FILES:
+        src = src_dir / f
+        if src.exists():
+            shutil.copy2(src, DATA_DIR / f)
     for host, target in INSTALL_TARGETS.items():
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        target.write_text(META_SKILL_TEMPLATE, encoding="utf-8")
         print(f"[install] {host}: {target}")
+    print(f"[install] 工具已自拷贝到 {DATA_DIR}（meta-skill 以 ~/.skill-picker 为准）")
 
 
 # ---------------------------------------------------------------- CLI
@@ -526,8 +538,58 @@ def cmd_scan() -> dict:
     print(f"[scan] catalog 已写入 {CATALOG_MD}")
     print_gates(catalog["gates"])
     if any(g["status"] == "fail" for g in catalog["gates"]):
-        print("[gate] 存在 FAIL 门禁：catalog 覆盖不完整，匹配结果不可信，请先处理！")
+        print("[gate] 存在 FAIL 门禁：结果不可信，请先处理！")
     return catalog
+
+
+def _load_or_scan_catalog() -> dict:
+    if CATALOG_JSON.exists():
+        catalog = json.loads(CATALOG_JSON.read_text(encoding="utf-8"))
+        generated = catalog.get("generated_at", "1970-01-01")
+        age_days = (datetime.now(timezone.utc)
+                    - datetime.fromisoformat(generated)).days
+        if age_days <= 7:
+            return catalog
+        print(f"[match] catalog 已 {age_days} 天未更新，自动重扫…")
+    return cmd_scan()
+
+
+def cmd_match(argv: list[str]) -> None:
+    query, top, as_json = "", 4, False
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--top" and i + 1 < len(argv):
+            top = int(argv[i + 1]); i += 2
+        elif argv[i] == "--json":
+            as_json = True; i += 1
+        else:
+            query = argv[i]; i += 1
+    if not query:
+        print('用法: python skillpick.py match "意图" [--top N] [--json]')
+        sys.exit(1)
+    catalog = _load_or_scan_catalog()
+    index = matching.build_index(catalog["skills"], RULES)
+    results = matching.match(index, query, top=top)
+    gates_brief = [{"id": g["id"], "status": g["status"], "detail": g["detail"]}
+                   for g in catalog.get("gates", [])]
+    if as_json:
+        print(json.dumps({"query": query, "gates": gates_brief, "results": results},
+                         ensure_ascii=False, indent=2))
+        return
+    for g in gates_brief:
+        if g["status"] != "pass":
+            print(f"[gate {g['id']}] {g['status'].upper()}  {g['detail']}")
+    if not results:
+        print(f"[match] 「{query}」没有匹配的 skill")
+        return
+    for rank, r in enumerate(results, 1):
+        hosts = "/".join(r["hosts"])
+        print(f"{rank}. {r['name']}  score={r['score']}  [{r['category']}]  ({hosts})")
+        print(f"   {r['description'][:100]}")
+        print(f"   why: name={r['why']['name']} desc={r['why']['desc']} "
+              f"kw={r['why']['kw']} cat_pinned={r['why']['cat_pinned']}")
+        for c in r["copies"]:
+            print(f"   [{c['host']}] {c['path']}")
 
 
 def cmd_report() -> None:
@@ -541,12 +603,11 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")  # Windows 控制台默认 GBK，避免中文乱码
     cmd = sys.argv[1] if len(sys.argv) > 1 else "scan"
-    if cmd == "scan":
+    if cmd in ("scan", "check"):
         catalog = cmd_scan()
         sys.exit(2 if any(g["status"] == "fail" for g in catalog["gates"]) else 0)
-    elif cmd == "check":
-        catalog = cmd_scan()
-        sys.exit(2 if any(g["status"] == "fail" for g in catalog["gates"]) else 0)
+    elif cmd == "match":
+        cmd_match(sys.argv[2:])
     elif cmd == "install":
         cmd_scan()
         install_meta_skill()
