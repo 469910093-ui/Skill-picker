@@ -284,16 +284,7 @@ intentEl.addEventListener('input', () => {
     let catHit = 0; qToks.forEach(t => { if (t.length >= 2 && s._cat.includes(t)) catHit++; });
     score += 0.04 * Math.min(catHit, 2);             // 场景弱加权
     return { s, score, ns, ds };
-  }).filter(x => x.score > 0.12).sort((a, b) => b.score - a.score);
-  // 同名多副本只展示得分最高的一份（副本差异在“理技能”tab 里看）
-  const seen = new Set();
-  const deduped = [];
-  for (const x of scored) {
-    if (seen.has(x.s.name)) continue;
-    seen.add(x.s.name); deduped.push(x);
-    if (deduped.length === 4) break;
-  }
-  scored.length = 0; scored.push(...deduped);
+  }).filter(x => x.score > 0.12).sort((a, b) => b.score - a.score).slice(0, 4);
 
   if (!scored.length) {
     recoEl.className = 'show';
@@ -316,7 +307,7 @@ intentEl.addEventListener('input', () => {
       '<div class="reco-rank">' + (i + 1) + '</div><div class="reco-body">' +
       '<div>' + (i === 0 ? '<span class="ai-badge">AI 建议</span>' : '') +
       '<span class="reco-name">' + x.s.name + '</span>' +
-      '<span class="badge host" style="background:' + x.s.color + '">' + x.s.hostLabel + '</span>' +
+      x.s.hosts.map(h => '<span class="badge host" style="background:' + h[1] + ';margin-right:4px">' + h[0] + '</span>').join('') +
       (x.s.warn ? ' <span class="badge warn">⚠ ' + x.s.warn + '</span>' : '') + '</div>' +
       '<div class="reco-desc">' + x.s.desc + '</div>' +
       '<div class="reco-why">匹配依据：' + (kws || '<span class="kw">弱相关</span>') + cross +
@@ -397,19 +388,48 @@ def _warn_maps(catalog: dict):
     return drifted, overlap
 
 
+def _merge_copies(skills: list[dict], drifted: set, overlap: dict) -> list[dict]:
+    """同一 skill 散在不同客户端的副本合并为一条，hosts 逐一保留。"""
+    groups: dict[str, list[dict]] = {}
+    for s in skills:
+        groups.setdefault(s["dir_name"].lower(), []).append(s)
+    merged = []
+    for key, copies in groups.items():
+        primary = max(copies, key=lambda c: (len(c["description"]), len(c.get("keywords", ""))))
+        merged.append({
+            "name": primary["name"],
+            "dir_name": primary["dir_name"],
+            "description": primary["description"],
+            "keywords": primary.get("keywords", ""),
+            "category": primary["category"],
+            "hosts": sorted({c["host"] for c in copies}),
+            "copies": [{"host": c["host"], "path": c["path"]} for c in copies],
+            "drift": key in drifted,
+            "overlap": max((overlap.get(c["path"], 0) for c in copies), default=0),
+        })
+    return merged
+
+
 def build_dashboard() -> Path:
     catalog = json.loads(CATALOG_JSON.read_text(encoding="utf-8"))
     skills = catalog["skills"]
     drifted, overlap = _warn_maps(catalog)
     clusters = _union_find_clusters(catalog)
+    merged = _merge_copies(skills, drifted, overlap)
 
-    def warn_text(s):
+    def warn_text(m):
         w = []
-        if s["dir_name"].lower() in drifted:
+        if m["drift"]:
             w.append("同名漂移")
-        if s["path"] in overlap:
-            w.append(f"重叠×{overlap[s['path']]}")
+        if m["overlap"]:
+            w.append(f"重叠×{m['overlap']}")
         return " / ".join(w)
+
+    def host_badges(m):
+        return "".join(
+            f'<span class="badge host" style="background:{HOST_LABELS.get(h, (h, "#888"))[1]}">'
+            f'{html.escape(HOST_LABELS.get(h, (h, "#888"))[0])}</span>'
+            for h in m["hosts"])
 
     # 聚簇卡片
     cluster_html = []
@@ -434,41 +454,45 @@ def build_dashboard() -> Path:
             f'{html.escape(title[:60])}{tag}</div>'
             f'{"".join(member_rows)}<div class="pairs">{"".join(pair_rows)}</div></div>')
 
-    # 场景分区
+    # 场景分区（合并后的条目；多端副本一张卡、宿主 label 逐一展示）
     by_cat: dict[str, list[dict]] = {}
-    for s in skills:
-        by_cat.setdefault(s["category"], []).append(s)
+    for m in merged:
+        by_cat.setdefault(m["category"], []).append(m)
     sections = []
     for cat in sorted(by_cat, key=lambda c: -len(by_cat[c])):
         cards = []
-        for s in sorted(by_cat[cat], key=lambda x: x["name"].lower()):
-            label, color = HOST_LABELS.get(s["host"], (s["host"], "#888"))
-            w = warn_text(s)
+        for m in sorted(by_cat[cat], key=lambda x: x["name"].lower()):
+            w = warn_text(m)
             warn_badge = f'<span class="badge warn">! {html.escape(w)}</span>' if w else ""
-            text = html.escape(f"{s['name']} {s['description']} {s.get('keywords', '')} {cat}".lower(), quote=True)
+            text = html.escape(f"{m['name']} {m['description']} {m['keywords']} {cat}".lower(), quote=True)
             text = "".join(ch for ch in text if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+            paths = "<br>".join(
+                f'[{html.escape(HOST_LABELS.get(c["host"], (c["host"], ""))[0])}] {html.escape(c["path"])}'
+                for c in m["copies"])
             cards.append(
                 f'<div class="card" data-text="{text}">'
-                f'<div class="top"><span class="name">{html.escape(s["name"])}</span>'
-                f'<span class="badge host" style="background:{color}">{html.escape(label)}</span>{warn_badge}</div>'
-                f'<div class="desc">{html.escape(s["description"]) or "（无描述）"}</div>'
-                f'<div class="path">{html.escape(s["path"])}</div></div>')
+                f'<div class="top"><span class="name">{html.escape(m["name"])}</span>'
+                f'{host_badges(m)}{warn_badge}</div>'
+                f'<div class="desc">{html.escape(m["description"]) or "（无描述）"}</div>'
+                f'<div class="path">{paths}</div></div>')
         sections.append(f"<section><h2>{html.escape(cat)}（{len(cards)}）</h2>"
                         f'<div class="grid">{"".join(cards)}</div></section>')
 
-    # 给 JS 的数据
+    # 给 JS 的数据（同样是合并后的条目）
     js_data = []
-    for s in skills:
-        label, color = HOST_LABELS.get(s["host"], (s["host"], "#888"))
+    for m in merged:
         js_data.append({
-            "name": s["name"], "desc": s["description"][:220], "cat": s["category"],
-            "kw": s.get("keywords", "")[:300],
-            "hostLabel": label, "color": color, "warn": warn_text(s),
+            "name": m["name"], "desc": m["description"][:220], "cat": m["category"],
+            "kw": m["keywords"][:300],
+            "hosts": [[HOST_LABELS.get(h, (h, "#888"))[0], HOST_LABELS.get(h, (h, "#888"))[1]]
+                      for h in m["hosts"]],
+            "warn": warn_text(m),
         })
     data_json = json.dumps(js_data, ensure_ascii=False).replace("</", "<\\/")
 
-    stats = (f"{catalog['skill_count']} 个 skill · {len(by_cat)} 个场景 · "
-             f"{len(clusters)} 组相似/漂移聚簇 · 生成于 {catalog['generated_at'][:16]} UTC")
+    stats = (f"{len(merged)} 个 skill（含多端副本共 {catalog['skill_count']} 份） · "
+             f"{len(by_cat)} 个场景 · {len(clusters)} 组相似/漂移聚簇 · "
+             f"生成于 {catalog['generated_at'][:16]} UTC")
 
     page = (PAGE.replace("__STATS__", stats)
                 .replace("__NCLUSTER__", str(len(clusters)))
