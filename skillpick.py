@@ -98,6 +98,29 @@ def parse_frontmatter(text: str) -> dict:
     return fm
 
 
+def extract_keywords(text: str) -> str:
+    """从 SKILL.md 正文提炼关键词：标题、加粗短语、行内代码名。
+
+    扫描时本来就已全文读取（为算 hash），此步零额外 IO；
+    产出写入 catalog 供匹配加权，长度上限 400 字符。
+    """
+    body = text
+    if body.lstrip().startswith("---"):
+        parts = body.lstrip().split("---", 2)
+        if len(parts) == 3:
+            body = parts[2]
+    heads = re.findall(r"^#{1,4}\s+(.+)$", body, re.M)
+    bolds = re.findall(r"\*\*([^*\n]{2,30})\*\*", body)
+    codes = re.findall(r"`([A-Za-z0-9_./\-]{3,40})`", body)
+    out, seen = [], set()
+    for t in heads + bolds + codes[:30]:
+        t = re.sub(r"[#*`\[\]()]+", "", t).strip()
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            out.append(t)
+    return " ".join(out)[:400]
+
+
 def fallback_meta(text: str) -> dict:
     """无 frontmatter 时：第一个标题当 name，其后第一段当 description。"""
     name, desc_lines, in_body = "", [], False
@@ -139,6 +162,7 @@ def scan_skills() -> list[dict]:
                 "name": name,
                 "dir_name": skill_md.parent.name,
                 "description": (fm.get("description") or "").strip(),
+                "keywords": extract_keywords(text),
                 "path": str(skill_md),
                 "host": host,
                 "root": str(root),

@@ -43,9 +43,20 @@ PAGE = """<!DOCTYPE html>
   header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px; }
   h1 { font-size: 22px; font-weight: 700; }
   .stats { color: var(--dim); font-size: 13px; }
-  .readonly { display: inline-flex; align-items: center; gap: 6px; margin: 10px 0 20px;
+  .readonly { display: inline-flex; align-items: center; gap: 6px; margin: 10px 0 16px;
               background: rgba(74,222,128,.08); border: 1px solid rgba(74,222,128,.35);
               color: var(--green); font-size: 12.5px; border-radius: 999px; padding: 3px 14px; }
+
+  /* 顶部 tabs */
+  .tabs { display: flex; gap: 8px; margin-bottom: 22px; border-bottom: 1px solid var(--line); }
+  .tabbtn { background: none; border: none; color: var(--dim); font: inherit; font-size: 15px;
+            font-weight: 600; padding: 9px 18px 11px; cursor: pointer; border-bottom: 2px solid transparent; }
+  .tabbtn:hover { color: var(--text); }
+  .tabbtn.active { color: var(--text); border-bottom-color: var(--blue); }
+  .tabbtn .n { font-size: 11.5px; color: var(--faint); margin-left: 6px; }
+  .tabbtn.t2.active { border-bottom-color: var(--red); }
+  .tabpane { display: none; }
+  .tabpane.active { display: block; }
 
   /* 意图输入 */
   .intent-wrap { margin-bottom: 30px; }
@@ -114,18 +125,26 @@ PAGE = """<!DOCTYPE html>
 <header><h1>Skill Picker</h1><span class="stats">__STATS__</span></header>
 <div class="readonly">✓ 只读模式 — 本工具不会修改、移动或删除任何 skill，仅展示与提醒</div>
 
-<div class="intent-wrap">
-  <input id="intent" type="search" placeholder="输入你的意图，比如：我要做一份周报 / 帮我画个图表 / 写飞书文档…">
-  <div class="intent-hint">输入后即时给出候选 skills、描述与 AI 建议；同时按关联度过滤下方卡片。会话内的建议由 skill-picker 结合真实上下文给出，这里为本地近似。</div>
-  <div id="reco"></div>
+<div class="tabs">
+  <button class="tabbtn active" data-tab="find">🔍 找技能<span class="n">意图匹配 · AI 建议</span></button>
+  <button class="tabbtn t2" data-tab="tidy">🩺 理技能<span class="n">相似/漂移自查 · __NCLUSTER__ 组</span></button>
 </div>
 
-<div id="sections">__SECTIONS__</div>
-<div class="empty" id="empty">没有匹配的 skill</div>
+<div class="tabpane active" id="tab-find">
+  <div class="intent-wrap">
+    <input id="intent" type="search" placeholder="输入你的意图，比如：我要做一份周报 / 帮我画个图表 / 写飞书文档…">
+    <div class="intent-hint">输入后即时给出候选 skills、描述与 AI 建议；同时按关联度过滤下方卡片。会话内的建议由 skill-picker 结合真实上下文给出，这里为本地近似。</div>
+    <div id="reco"></div>
+  </div>
+  <div id="sections">__SECTIONS__</div>
+  <div class="empty" id="empty">没有匹配的 skill</div>
+</div>
 
-<div class="clusters">
-  <h2><span class="bang">!</span>相似 / 漂移聚簇检查（__NCLUSTER__ 组）— 建议人工确认后自行取舍，工具不代改</h2>
-  <div class="cluster-grid">__CLUSTERS__</div>
+<div class="tabpane" id="tab-tidy">
+  <div class="clusters">
+    <h2><span class="bang">!</span>相似 / 漂移聚簇检查（__NCLUSTER__ 组）— 建议人工确认后自行取舍，工具不代改</h2>
+    <div class="cluster-grid">__CLUSTERS__</div>
+  </div>
 </div>
 
 <script>
@@ -157,9 +176,9 @@ function tokenize(s) {
 // 预处理字段 token + IDF（token 在越多 skill 里出现，权重越低）
 const DF = new Map();
 SKILLS.forEach(s => {
-  s._name = tokenize(s.name); s._desc = tokenize(s.desc); s._cat = norm(s.cat);
-  s._nt = norm(s.name); s._dt = norm(s.desc);
-  new Set([...s._name, ...s._desc]).forEach(t => DF.set(t, (DF.get(t) || 0) + 1));
+  s._name = tokenize(s.name); s._desc = tokenize(s.desc); s._kw = tokenize(s.kw || ''); s._cat = norm(s.cat);
+  s._nt = norm(s.name); s._dt = norm(s.desc); s._kt = norm(s.kw || '');
+  new Set([...s._name, ...s._desc, ...s._kw]).forEach(t => DF.set(t, (DF.get(t) || 0) + 1));
 });
 const N = SKILLS.length;
 const idf = t => DF.has(t) ? Math.log(1 + N / DF.get(t)) : 0;
@@ -213,6 +232,13 @@ function matchedRuns(intent, text) {  // 贪心找出意图中命中 skill 文�
   return [...new Set(runs)].slice(0, 5);
 }
 
+// tabs 切换
+document.querySelectorAll('.tabbtn').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.tabbtn').forEach(x => x.classList.toggle('active', x === b));
+  document.querySelectorAll('.tabpane').forEach(p => p.classList.toggle('active', p.id === 'tab-' + b.dataset.tab));
+  if (b.dataset.tab === 'find') document.getElementById('intent').focus();
+}));
+
 const intentEl = document.getElementById('intent');
 const recoEl = document.getElementById('reco');
 const cards = [...document.querySelectorAll('.card')];
@@ -249,14 +275,25 @@ intentEl.addEventListener('input', () => {
   const scored = SKILLS.map(s => {
     const ns = fieldScore(qw, s._name);              // 名称命中
     const ds = fieldScore(qw, s._desc);              // 描述命中
-    let score = 0.5 * ns + 0.5 * ds;
+    const ks = fieldScore(qw, s._kw);                // MD 正文关键词命中
+    let score = 0.42 * ns + 0.42 * ds + 0.16 * ks;
     if (ns > 0.08 && ds > 0.08) score *= 1.5;        // 交叉验证：名称+描述都命中才强推
+    else if (ks > 0.1 && (ns > 0.08 || ds > 0.08)) score *= 1.2;  // 正文与名称/描述互证
     if (s._nt.replace(/ /g, '').includes(q)) score += 0.4;   // 整串命中名称
     else if (s._dt.replace(/ /g, '').includes(q)) score += 0.25; // 整串命中描述
     let catHit = 0; qToks.forEach(t => { if (t.length >= 2 && s._cat.includes(t)) catHit++; });
     score += 0.04 * Math.min(catHit, 2);             // 场景弱加权
     return { s, score, ns, ds };
-  }).filter(x => x.score > 0.12).sort((a, b) => b.score - a.score).slice(0, 4);
+  }).filter(x => x.score > 0.12).sort((a, b) => b.score - a.score);
+  // 同名多副本只展示得分最高的一份（副本差异在“理技能”tab 里看）
+  const seen = new Set();
+  const deduped = [];
+  for (const x of scored) {
+    if (seen.has(x.s.name)) continue;
+    seen.add(x.s.name); deduped.push(x);
+    if (deduped.length === 4) break;
+  }
+  scored.length = 0; scored.push(...deduped);
 
   if (!scored.length) {
     recoEl.className = 'show';
@@ -268,10 +305,12 @@ intentEl.addEventListener('input', () => {
   recoEl.innerHTML = scored.map((x, i) => {
     const nameRuns = matchedRuns(q, x.s._nt.replace(/ /g, ''));
     const descRuns = matchedRuns(q, x.s._dt.replace(/ /g, '')).filter(r => !nameRuns.includes(r));
-    const synHits = qw.filter(([t, f]) => f < 1 && (x.s._name.has(t) || x.s._desc.has(t)))
+    const kwRuns = matchedRuns(q, x.s._kt.replace(/ /g, '')).filter(r => !nameRuns.includes(r) && !descRuns.includes(r)).slice(0, 3);
+    const synHits = qw.filter(([t, f]) => f < 1 && (x.s._name.has(t) || x.s._desc.has(t) || x.s._kw.has(t)))
                       .slice(0, 4).map(([t]) => '<span class="kw">近义·' + t + '</span>').join('');
     let kws = nameRuns.map(r => '<span class="kw">名称·' + r + '</span>').join('') +
-              descRuns.map(r => '<span class="kw">描述·' + r + '</span>').join('') + synHits;
+              descRuns.map(r => '<span class="kw">描述·' + r + '</span>').join('') +
+              kwRuns.map(r => '<span class="kw">正文·' + r + '</span>').join('') + synHits;
     const cross = x.ns > 0.08 && x.ds > 0.08 ? '<span class="kw" style="color:var(--green);background:rgba(74,222,128,.1)">名称+描述交叉命中</span>' : '';
     return '<div class="reco-card' + (i === 0 ? ' best' : '') + '">' +
       '<div class="reco-rank">' + (i + 1) + '</div><div class="reco-body">' +
@@ -406,7 +445,7 @@ def build_dashboard() -> Path:
             label, color = HOST_LABELS.get(s["host"], (s["host"], "#888"))
             w = warn_text(s)
             warn_badge = f'<span class="badge warn">! {html.escape(w)}</span>' if w else ""
-            text = html.escape(f"{s['name']} {s['description']} {cat}".lower(), quote=True)
+            text = html.escape(f"{s['name']} {s['description']} {s.get('keywords', '')} {cat}".lower(), quote=True)
             text = "".join(ch for ch in text if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
             cards.append(
                 f'<div class="card" data-text="{text}">'
@@ -423,6 +462,7 @@ def build_dashboard() -> Path:
         label, color = HOST_LABELS.get(s["host"], (s["host"], "#888"))
         js_data.append({
             "name": s["name"], "desc": s["description"][:220], "cat": s["category"],
+            "kw": s.get("keywords", "")[:300],
             "hostLabel": label, "color": color, "warn": warn_text(s),
         })
     data_json = json.dumps(js_data, ensure_ascii=False).replace("</", "<\\/")
