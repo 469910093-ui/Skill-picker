@@ -161,21 +161,24 @@ const stripStop = s => { STOP.forEach(w => { s = s.split(w).join(''); }); return
 const norm = s => s.toLowerCase().replace(/[^a-z0-9\\u4e00-\\u9fff]+/g, ' ').replace(/\\s+/g, ' ').trim();
 const isCJK = ch => ch >= '\\u4e00' && ch <= '\\u9fff';
 
-// 分词：中文单字 + 中文二元组 + 英文/数字整词
-function tokenize(s) {
+// 分词：文档侧保留中文单字+二元组；查询侧只用长度≥2 的词（避免「设」「计」满天飞）
+function tokenize(s, {query=false} = {}) {
   const toks = new Set();
   for (const word of norm(s).split(' ')) {
     if (!word) continue;
     if (/^[a-z0-9]+$/.test(word)) { toks.add(word); continue; }
     const chars = [...word];
     for (let i = 0; i < chars.length; i++) {
-      if (isCJK(chars[i])) toks.add(chars[i]);
-      if (i + 1 < chars.length && isCJK(chars[i]) && isCJK(chars[i+1])) toks.add(chars[i] + chars[i+1]);
-      if (!isCJK(chars[i])) { // 混排里的英文片段
+      if (isCJK(chars[i])) {
+        if (!query) toks.add(chars[i]);  // 单字仅索引侧保留
+        if (i + 1 < chars.length && isCJK(chars[i]) && isCJK(chars[i+1]))
+          toks.add(chars[i] + chars[i+1]);
+      } else {
         let j = i; while (j < chars.length && !isCJK(chars[j])) j++;
         toks.add(chars.slice(i, j).join('')); i = j - 1;
       }
     }
+    if (query && word.length >= 2) toks.add(word);  // 整词「设计」本身
   }
   return toks;
 }
@@ -201,15 +204,19 @@ const SYN = {
   '会议': 'meeting minutes 纪要', '邮件': 'mail email', '日程': 'calendar schedule',
   '地图': 'map poi 位置', '播客': 'podcast 音频', '翻译': 'translate translation',
   '爬虫': 'crawl scrape fetch', '部署': 'deploy deployment 发布', '测试': 'test testing qa',
-  '海报': 'poster infographic 信息图 design', '信息图': 'infographic poster',
-  '设计': 'design designer figma ui ux mockup 界面 原型', '平面': 'design graphic poster figma 海报 视觉',
-  '原型': 'prototype mockup figma design', '界面': 'ui ux design figma mockup',
+  '海报': 'poster infographic 信息图', '信息图': 'infographic poster',
+  // 设计：近义词优先 figma 等强信号；泛词 design/ui 权重更低，避免麦肯锡/周报抢榜
+  '设计': 'figma figjam mockup prototype 原型 视觉设计', '平面': 'figma graphic poster 海报 视觉设计',
+  '平面设计': 'figma figjam mockup graphic poster 视觉设计',
+  '原型': 'prototype mockup figma', '界面': 'figma mockup ui ux',
   '写作': 'write writing 文章 文案', '文案': 'copy copywriting 写作 write',
   '数据': 'data bigquery sql 分析', '分析': 'analysis analytics 数据',
   '皮肤': 'theme 主题', '插件': 'plugin extension 扩展',
 };
+// 泛词近义：参与匹配但折价更狠
+const WEAK_SYN = new Set(['design', 'designer', 'ui', 'ux', 'image', 'data', 'write', 'analysis']);
 
-// 单字段得分：意图 token 的 IDF 加权命中率（近义词按 0.7 折价参与）
+// 单字段得分：意图 token 的 IDF 加权命中率
 function fieldScore(qw, fieldToks) {   // qw: [token, weight][]
   let hitW = 0, totW = 0;
   qw.forEach(([t, f]) => {
@@ -222,10 +229,19 @@ function fieldScore(qw, fieldToks) {   // qw: [token, weight][]
 
 function expandIntent(qToks) {         // -> [token, weight][]，含近义词
   const out = new Map();
-  qToks.forEach(t => out.set(t, 1));
+  qToks.forEach(t => { if (t.length >= 2) out.set(t, 1); });
   qToks.forEach(t => {
-    if (SYN[t]) for (const syn of tokenize(SYN[t])) if (!out.has(syn)) out.set(syn, 0.7);
+    if (!SYN[t]) return;
+    for (const syn of tokenize(SYN[t], {query: true})) {
+      if (syn.length < 2 || out.has(syn)) continue;
+      out.set(syn, WEAK_SYN.has(syn) ? 0.35 : 0.85);
+    }
   });
+  // 补一层弱近义（design），仅当用户原词是设计/平面时
+  if (qToks.has('设计') || qToks.has('平面') || qToks.has('平面设计')) {
+    for (const syn of ['design', 'designer', 'ui', 'ux'])
+      if (!out.has(syn)) out.set(syn, 0.3);
+  }
   return [...out.entries()];
 }
 
@@ -269,43 +285,55 @@ intentEl.addEventListener('input', () => {
     document.getElementById('empty').style.display = 'none';
     return;
   }
-  const qToks = tokenize(q);
+  const qToks = tokenize(q, {query: true});
   const qw = expandIntent(qToks);
+  // 场景名是否被意图点名（「设计」→「设计/Figma」）：该区整体置顶
+  const catPinned = new Set(
+    [...new Set(SKILLS.map(s => s.cat))].filter(cat => {
+      const cn = norm(cat).replace(/ /g, '');
+      return cn.includes(q) || [...qToks].some(t => t.length >= 2 && cn.includes(t));
+    })
+  );
   const all = SKILLS.map(s => {
     const ns = fieldScore(qw, s._name);              // 名称命中
     const ds = fieldScore(qw, s._desc);              // 描述命中
     const ks = fieldScore(qw, s._kw);                // MD 正文关键词命中
-    let score = 0.42 * ns + 0.42 * ds + 0.16 * ks;
-    if (ns > 0.08 && ds > 0.08) score *= 1.5;        // 交叉验证：名称+描述都命中才强推
-    else if (ks > 0.1 && (ns > 0.08 || ds > 0.08)) score *= 1.2;  // 正文与名称/描述互证
-    if (s._nt.replace(/ /g, '').includes(q)) score += 0.4;   // 整串命中名称
-    else if (s._dt.replace(/ /g, '').includes(q)) score += 0.25; // 整串命中描述
-    let catHit = 0; qToks.forEach(t => { if (t.length >= 2 && s._cat.includes(t)) catHit++; });
-    score += 0.04 * Math.min(catHit, 2);             // 场景弱加权
+    let score = 0.50 * ns + 0.30 * ds + 0.20 * ks;   // 名称权重更高，减少描述里泛词抢榜
+    if (ns > 0.08 && ds > 0.08) score *= 1.5;
+    else if (ks > 0.1 && (ns > 0.08 || ds > 0.08)) score *= 1.2;
+    // 整串命中：名称强加分；描述仅当该词不常见（DF ≤ 12%）才加，避免「设计」泛词刷分
+    const qCompact = q.replace(/ /g, '');
+    if (s._nt.replace(/ /g, '').includes(qCompact)) score += 0.45;
+    else if (s._dt.replace(/ /g, '').includes(qCompact)) {
+      const dfRatio = (DF.get(qCompact) || 0) / Math.max(N, 1);
+      if (dfRatio <= 0.12) score += 0.2;
+    }
+    if (catPinned.has(s.cat)) score += 0.35;         // 场景被点名：区内 skill 整体抬升
     return { s, score, ns, ds };
   });
   const scoreMap = new Map(all.map(x => [x.s.name, x.score]));
-  const scored = all.filter(x => x.score > 0.12).sort((a, b) => b.score - a.score).slice(0, 4);
+  const scored = all.filter(x => x.score > 0.15).sort((a, b) => b.score - a.score).slice(0, 4);
 
-  // 过滤卡片（文本命中或得分达标），区内按相关度排序
+  // 过滤：以得分为准；文本命中仅作补充且要求长度≥2 的意图词
   const qWords = [...qToks].filter(t => t.length >= 2);
   const cScore = c => scoreMap.get(c.dataset.name) || 0;
   cards.forEach(c => {
-    const hit = c.dataset.text.includes(q) || qWords.some(t => c.dataset.text.includes(t)) || cScore(c) > 0.12;
+    const hit = cScore(c) > 0.15 || qWords.some(t => c.dataset.text.includes(t) && t.length >= 2);
     c.style.display = hit ? '' : 'none';
   });
   let any = false;
   const secBest = new Map();
   sections.forEach(s => {
     const vis = [...s.querySelectorAll('.card')].filter(c => c.style.display !== 'none');
-    secBest.set(s, vis.length ? Math.max(...vis.map(cScore)) : -1);
+    const title = (s.querySelector('h2')?.textContent || '').replace(/（.*$/, '');
+    let best = vis.length ? Math.max(...vis.map(cScore)) : -1;
+    if (catPinned.has(title)) best += 10;            // 点名场景强制排最前
+    secBest.set(s, best);
     s.style.display = vis.length ? '' : 'none'; any = any || vis.length > 0;
-    // 区内卡片按相关度重排
     const grid = s.querySelector('.grid');
     vis.sort((a, b) => cScore(b) - cScore(a)).forEach(c => grid.appendChild(c));
   });
   document.getElementById('empty').style.display = any ? 'none' : 'block';
-  // 场景按「区内最高相关度」排序，而非命中数量——大类不再靠数量霸榜
   [...sections].sort((a, b) => secBest.get(b) - secBest.get(a)).forEach(s => sectionsBox.appendChild(s));
 
   if (!scored.length) {
