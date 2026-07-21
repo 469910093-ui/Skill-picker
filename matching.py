@@ -11,11 +11,12 @@ import json
 import math
 import re
 from pathlib import Path
+from typing import Optional
 
 RULES_PATH = Path(__file__).resolve().parent / "rules.json"
 
 
-def load_rules(path: Path | None = None) -> dict:
+def load_rules(path: Optional[Path] = None) -> dict:
     return json.loads((path or RULES_PATH).read_text(encoding="utf-8"))
 
 
@@ -129,7 +130,7 @@ class MatchIndex:
         return math.log(1 + self.n / self.df[t]) if t in self.df else 0.0
 
 
-def build_index(skills: list, rules: dict | None = None) -> MatchIndex:
+def build_index(skills: list, rules: Optional[dict] = None) -> MatchIndex:
     rules = rules or load_rules()
     return MatchIndex(merge_copies(skills), rules)
 
@@ -226,7 +227,7 @@ def match(index: MatchIndex, raw_query: str, top: int = 4) -> list:
 
 # ---------------------------------------------------------------- 黄金用例
 
-def run_golden(index: MatchIndex, rules: dict | None = None) -> list:
+def run_golden(index: MatchIndex, rules: Optional[dict] = None) -> list:
     """对 rules.json 的 golden 用例逐条跑 match；期望 skill 未安装则跳过。"""
     rules = rules or index.rules
     installed = {s["dir_name"].lower() for s in index.skills} | \

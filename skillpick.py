@@ -203,7 +203,7 @@ def jaccard(a: str, b: str) -> float:
     return len(ga & gb) / len(ga | gb)
 
 
-def _plugin_family(path_str: str) -> tuple | None:
+def _plugin_family(path_str: str):
     """同一插件家族（marketplace/官方套件）内部的相似是正常分工，不算重叠。"""
     parts = tuple(p.lower() for p in Path(path_str).parts)
     if "plugins" in parts:
@@ -373,8 +373,9 @@ def write_catalog_md(catalog: dict) -> None:
         "",
         f"生成时间: {catalog['generated_at']}  |  共 {catalog['skill_count']} 个 skill",
         "",
-        "> 由 skill-picker 自动生成。刷新: `python ~/.skill-picker/skillpick.py scan`",
-        "> 检索候选请优先用: `python ~/.skill-picker/skillpick.py match \"意图\" --json`",
+        "> 由 skill-picker 自动生成。刷新: `python <HOME>/.skill-picker/skillpick.py scan`",
+        "> 检索候选请优先用: `python <HOME>/.skill-picker/skillpick.py match \"意图\" --json`",
+        "> （<HOME>=用户主目录；Windows 上 python 不认 `~`，用 $env:USERPROFILE）",
         "",
     ]
     for g in catalog.get("gates", []):
@@ -453,13 +454,17 @@ description: >-
 
 ## 工作流程
 
-1. **必须先跑共享检索命令**（与 dashboard 同一引擎，禁止凭记忆翻 catalog）：
+1. **必须先跑共享检索命令**（与 dashboard 同一引擎，禁止凭记忆翻 catalog）。
+   路径按平台写，**Windows 的 python 不认 `~`**：
 
    ```
-   python ~/.skill-picker/skillpick.py match "<用户意图原话>" --top 4 --json
+   # Windows (PowerShell)
+   python "$env:USERPROFILE\.skill-picker\skillpick.py" match "<用户意图原话>" --top 4 --json
+   # macOS / Linux
+   python3 "$HOME/.skill-picker/skillpick.py" match "<用户意图原话>" --top 4 --json
    ```
 
-   命令不存在或报错 → 先跑 `python ~/.skill-picker/skillpick.py scan` 再重试。
+   `python` 不存在时依次换 `py`（Windows）或 `python3`。命令报错 → 先跑同路径 `scan` 再重试。
 
 2. **门禁检查**：输出的 gates 中若 G1 覆盖率 FAIL，说明本机存在未被索引的 skills，
    匹配结果不完整——必须提醒用户，并给出把未覆盖目录加入
@@ -478,10 +483,14 @@ description: >-
 
 用户说「打开 skills 看板 / 理技能 / 看看重复的 skills / 清理 skills / skill 总览」时：
 
-1. 后台启动本地预览（自动选端口，输出访问 URL）：
+1. **后台**启动本地预览（自动选端口，输出访问 URL；必须后台运行，serve 是常驻进程，
+   前台跑会阻塞后续步骤）：
 
    ```
-   python ~/.skill-picker/skillpick.py serve
+   # Windows (PowerShell)
+   python "$env:USERPROFILE\.skill-picker\skillpick.py" serve
+   # macOS / Linux
+   python3 "$HOME/.skill-picker/skillpick.py" serve
    ```
 
 2. **Cursor 宿主**：用内置浏览器以 side（侧边）位置打开输出的 URL——
@@ -494,13 +503,16 @@ description: >-
 
 ## Quick Reference
 
+以下 `<HOME>` 指用户主目录（Windows PowerShell 用 `$env:USERPROFILE`，
+macOS/Linux 用 `$HOME`；Windows 上 `python` 缺失时换 `py`，Unix 用 `python3`）：
+
 | 命令 | 用途 |
 |---|---|
-| `python ~/.skill-picker/skillpick.py match "意图" --top 4 --json` | 检索候选（第一步必跑） |
-| `python ~/.skill-picker/skillpick.py serve` | 起本地看板，Cursor 内侧边打开 |
-| `python ~/.skill-picker/skillpick.py scan` | 刷新 catalog（新装 skill 后 / 超 7 天） |
-| `python ~/.skill-picker/skillpick.py check` | 四道门禁体检（退出码 2=不可信） |
-| `~/.skill-picker/catalog.md` | 人读/兜底用瘦身索引 |
+| `python "<HOME>/.skill-picker/skillpick.py" match "意图" --top 4 --json` | 检索候选（第一步必跑） |
+| `python "<HOME>/.skill-picker/skillpick.py" serve` | 起本地看板（后台运行），Cursor 内侧边打开 |
+| `python "<HOME>/.skill-picker/skillpick.py" scan` | 刷新 catalog（新装 skill 后 / 超 7 天） |
+| `python "<HOME>/.skill-picker/skillpick.py" check` | 四道门禁体检（退出码 2=不可信） |
+| `<HOME>/.skill-picker/catalog.md` | 人读/兜底用瘦身索引 |
 
 ## 只读铁律（不可违反）
 
