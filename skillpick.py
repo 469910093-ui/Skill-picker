@@ -432,8 +432,9 @@ META_SKILL_TEMPLATE = """---
 name: skill-picker
 description: >-
   Use when 用户想不起某个 skill 的名字、不确定该用哪个 skill、
-  询问"有没有 / 用哪个 skill 能做 X"、想知道本机装了哪些 skills，
-  或在多个相似 skills 之间犹豫不决时使用。
+  询问"有没有 / 用哪个 skill 能做 X"、想知道本机装了哪些 skills、
+  在多个相似 skills 之间犹豫不决，或要求打开 skills 看板、
+  浏览/筛选/清理本机 skills 时使用。
   用户已明确点名某个具体 skill、或任务本身与 skill 选择无关时不要使用。
 ---
 
@@ -473,11 +474,30 @@ description: >-
 
 5. 无匹配（match 返回空）→ 直说「本机没有对应 skill」，不要硬凑。
 
+## 打开看板（对话侧边栏的筛选 / 清理界面）
+
+用户说「打开 skills 看板 / 理技能 / 看看重复的 skills / 清理 skills / skill 总览」时：
+
+1. 后台启动本地预览（自动选端口，输出访问 URL）：
+
+   ```
+   python ~/.skill-picker/skillpick.py serve
+   ```
+
+2. **Cursor 宿主**：用内置浏览器以 side（侧边）位置打开输出的 URL——
+   看板就出现在用户与 AI 的对话框旁边，可直接输意图筛选、看「理技能」tab 的重复体检。
+   **其他宿主**（Claude Code / Codex / OpenClaw 为终端应用，无侧边栏）：
+   用系统默认浏览器打开（Windows `Start-Process <url>` / macOS `open` / Linux `xdg-open`）。
+
+3. 看板是只读体检：漂移/重叠仅提示。用户看完点名要清理时，
+   属于独立任务，逐项确认后再动手（见只读铁律）。
+
 ## Quick Reference
 
 | 命令 | 用途 |
 |---|---|
 | `python ~/.skill-picker/skillpick.py match "意图" --top 4 --json` | 检索候选（第一步必跑） |
+| `python ~/.skill-picker/skillpick.py serve` | 起本地看板，Cursor 内侧边打开 |
 | `python ~/.skill-picker/skillpick.py scan` | 刷新 catalog（新装 skill 后 / 超 7 天） |
 | `python ~/.skill-picker/skillpick.py check` | 四道门禁体检（退出码 2=不可信） |
 | `~/.skill-picker/catalog.md` | 人读/兜底用瘦身索引 |
@@ -599,6 +619,37 @@ def cmd_report() -> None:
     print(CATALOG_MD.read_text(encoding="utf-8"))
 
 
+def cmd_serve(argv: list[str]) -> None:
+    """本地预览看板：127.0.0.1 固定段端口，占用则顺延；单实例绑定（不复用端口）。"""
+    import functools
+    import http.server
+    import socketserver
+
+    base_port = 8471
+    if "--port" in argv:
+        base_port = int(argv[argv.index("--port") + 1])
+    if not (DATA_DIR / "dashboard.html").exists():
+        cmd_scan()
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler,
+                                directory=str(DATA_DIR))
+    httpd = None
+    for port in range(base_port, base_port + 10):
+        try:
+            # 默认 allow_reuse_address=False：端口被占时直接失败顺延，杜绝双实例抢连接
+            httpd = socketserver.TCPServer(("127.0.0.1", port), handler)
+            break
+        except OSError:
+            continue
+    if httpd is None:
+        print(f"[serve] {base_port}-{base_port + 9} 端口均被占用")
+        sys.exit(1)
+    print(f"[serve] http://127.0.0.1:{port}/dashboard.html  （Ctrl+C 停止）")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        httpd.server_close()
+
+
 def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")  # Windows 控制台默认 GBK，避免中文乱码
@@ -608,6 +659,8 @@ def main() -> None:
         sys.exit(2 if any(g["status"] == "fail" for g in catalog["gates"]) else 0)
     elif cmd == "match":
         cmd_match(sys.argv[2:])
+    elif cmd == "serve":
+        cmd_serve(sys.argv[2:])
     elif cmd == "install":
         cmd_scan()
         install_meta_skill()

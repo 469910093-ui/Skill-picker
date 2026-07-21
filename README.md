@@ -35,6 +35,7 @@ skill-picker 就会被唤醒并弹出候选让你选择。
 | `python skillpick.py scan` | 扫描所有 skill 目录，生成/刷新 catalog + dashboard + 门禁 |
 | `python skillpick.py check` | 同 scan（退出码 0=可信 / 2=门禁 FAIL） |
 | `python skillpick.py match "意图" [--top N] [--json]` | 共享引擎检索候选（meta-skill 第一步必跑） |
+| `python skillpick.py serve [--port N]` | 起本地看板服务（Cursor 中由 agent 侧边打开） |
 | `python skillpick.py install` | scan + 四宿主装 meta-skill + 工具自拷贝 |
 | `python skillpick.py report` | 打印当前 catalog |
 | `python -m unittest discover -s tests` | 跑测试（30 用例，含黄金匹配回归） |
