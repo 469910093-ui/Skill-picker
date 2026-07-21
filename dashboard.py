@@ -121,6 +121,11 @@ PAGE = """<!DOCTYPE html>
   .badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
   .host { color: #0e1013; font-weight: 600; }
   .warn { background: rgba(248,113,113,.12); color: var(--red); border: 1px solid rgba(248,113,113,.4); }
+  .copybtn { background: none; border: 1px solid var(--line); color: var(--faint);
+             border-radius: 6px; font-size: 11px; line-height: 1; padding: 3px 7px;
+             cursor: pointer; font-family: inherit; flex: none; }
+  .copybtn:hover { color: var(--text); border-color: #4b5563; background: var(--panel2); }
+  .copybtn.ok { color: var(--green); border-color: rgba(74,222,128,.5); }
   .desc { color: var(--dim); font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 3;
           -webkit-box-orient: vertical; overflow: hidden; }
   .card.open .desc { -webkit-line-clamp: unset; }
@@ -253,7 +258,26 @@ const cards = [...document.querySelectorAll('.card')];
 const sections = [...document.querySelectorAll('section')];
 const sectionsBox = document.getElementById('sections');
 const originalOrder = [...sections];
-cards.forEach(c => c.addEventListener('click', () => c.classList.toggle('open')));
+cards.forEach(c => c.addEventListener('click', e => {
+  if (e.target.closest('.copybtn')) return;   // 点复制角标不触发展开
+  c.classList.toggle('open');
+}));
+
+// 一键复制 skill 名（含 reco 面板动态节点，用事件委托）
+async function copyText(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch (err) {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); ta.remove();
+  }
+  btn.textContent = '✓ 已复制'; btn.classList.add('ok');
+  setTimeout(() => { btn.textContent = '⧉ 复制'; btn.classList.remove('ok'); }, 1200);
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.copybtn');
+  if (b) copyText(b.dataset.copy, b);
+});
 
 intentEl.addEventListener('input', () => {
   const raw = intentEl.value.trim();
@@ -341,7 +365,8 @@ intentEl.addEventListener('input', () => {
       '<div>' + (i === 0 ? '<span class="ai-badge">AI 建议</span>' : '') +
       '<span class="reco-name">' + x.s.name + '</span>' +
       x.s.hosts.map(h => '<span class="badge host" style="background:' + h[1] + ';margin-right:4px">' + h[0] + '</span>').join('') +
-      (x.s.warn ? ' <span class="badge warn">⚠ ' + x.s.warn + '</span>' : '') + '</div>' +
+      (x.s.warn ? ' <span class="badge warn">⚠ ' + x.s.warn + '</span>' : '') +
+      ' <button class="copybtn" data-copy="' + x.s.name + '" title="复制 skill 名">⧉ 复制</button></div>' +
       '<div class="reco-desc">' + x.s.desc + '</div>' +
       '<div class="reco-why">匹配依据：' + (kws || '<span class="kw">弱相关</span>') + cross +
       '　场景：' + x.s.cat + '</div>' +
@@ -485,10 +510,12 @@ def build_dashboard() -> Path:
             paths = "<br>".join(
                 f'[{html.escape(HOST_LABELS.get(c["host"], (c["host"], ""))[0])}] {html.escape(c["path"])}'
                 for c in m["copies"])
+            copy_btn = (f'<button class="copybtn" data-copy="{html.escape(m["name"], quote=True)}"'
+                        f' title="复制 skill 名">⧉ 复制</button>')
             cards.append(
                 f'<div class="card" data-text="{text}" data-name="{html.escape(m["name"], quote=True)}">'
                 f'<div class="top"><span class="name">{html.escape(m["name"])}</span>'
-                f'{host_badges(m)}{warn_badge}</div>'
+                f'{host_badges(m)}{warn_badge}{copy_btn}</div>'
                 f'<div class="desc">{html.escape(m["description"]) or "（无描述）"}</div>'
                 f'<div class="path">{paths}</div></div>')
         sections.append(f"<section><h2>{html.escape(cat)}（{len(cards)}）</h2>"
