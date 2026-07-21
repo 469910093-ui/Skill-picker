@@ -1,6 +1,13 @@
-"""从 catalog.json 生成单文件本地 HTML dashboard（tab-out 风格）。
+"""从 catalog.json 生成单文件本地 HTML dashboard。
 
-无服务器、无外部资源、无第三方库；生成后直接用浏览器打开 file:// 即可。
+设计原则（用户铁律）：
+1. skills 聚合聚类展示；
+2. 高度相似 / 同名漂移的 skills 圈成聚簇、红色感叹号标记，展示相似度与漂移；
+3. 意图输入框：模糊意图 -> 候选 skills + 描述 + AI 建议（本地近似打分；
+   会话内真正的上下文建议由 skill-picker meta-skill 给出）；
+4. 只读：本工具永不修改任何 skill，仅展示与提醒。
+
+无服务器、无外部资源、无第三方库。
 """
 
 import html
@@ -28,38 +35,72 @@ PAGE = """<!DOCTYPE html>
   :root {
     --bg: #0e1013; --panel: #16191e; --panel2: #1c2027; --line: #262b33;
     --text: #e8eaed; --dim: #9aa3af; --faint: #6b7280;
-    --amber: #f0b429; --purple: #a78bfa; --green: #4ade80;
+    --red: #f87171; --amber: #f0b429; --purple: #a78bfa; --green: #4ade80; --blue: #60a5fa;
   }
   * { box-sizing: border-box; margin: 0; }
   body { background: var(--bg); color: var(--text);
-         font: 14px/1.6 "Microsoft YaHei", "Segoe UI", system-ui, sans-serif; padding: 28px 32px 80px; }
-  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px; margin-bottom: 6px; }
-  h1 { font-size: 22px; font-weight: 700; letter-spacing: .5px; }
+         font: 14px/1.6 "Microsoft YaHei", "Segoe UI", system-ui, sans-serif; padding: 26px 32px 90px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px; }
+  h1 { font-size: 22px; font-weight: 700; }
   .stats { color: var(--dim); font-size: 13px; }
-  .hint { color: var(--faint); font-size: 12px; margin-bottom: 18px; }
-  #search { width: 100%; max-width: 520px; margin-bottom: 26px; padding: 10px 14px;
-            background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-            color: var(--text); font-size: 14px; outline: none; }
-  #search:focus { border-color: #4b5563; }
+  .readonly { display: inline-flex; align-items: center; gap: 6px; margin: 10px 0 20px;
+              background: rgba(74,222,128,.08); border: 1px solid rgba(74,222,128,.35);
+              color: var(--green); font-size: 12.5px; border-radius: 999px; padding: 3px 14px; }
 
-  .dupbox { background: #1d1a12; border: 1px solid #3d3417; border-radius: 12px;
-            padding: 14px 18px; margin-bottom: 26px; }
-  .dupbox h2 { font-size: 14px; color: var(--amber); margin-bottom: 8px; }
-  .dupbox li { color: var(--dim); font-size: 13px; margin-left: 18px; }
-  .dupbox b { color: var(--text); font-weight: 600; }
+  /* 意图输入 */
+  .intent-wrap { margin-bottom: 30px; }
+  #intent { width: 100%; max-width: 680px; padding: 12px 16px; font-size: 15px;
+            background: var(--panel); border: 1px solid #3b4250; border-radius: 12px;
+            color: var(--text); outline: none; }
+  #intent:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(96,165,250,.15); }
+  .intent-hint { color: var(--faint); font-size: 12px; margin-top: 6px; }
+  #reco { max-width: 980px; margin-top: 14px; display: none; }
+  #reco.show { display: block; }
+  .reco-card { display: flex; gap: 14px; align-items: flex-start; background: var(--panel);
+               border: 1px solid var(--line); border-radius: 12px; padding: 13px 16px; margin-bottom: 8px; }
+  .reco-card.best { border-color: rgba(96,165,250,.65); background: #151b26; }
+  .reco-rank { font-size: 18px; width: 26px; text-align: center; color: var(--faint); flex: none; }
+  .reco-body { min-width: 0; }
+  .reco-name { font-weight: 700; font-size: 15px; margin-right: 8px; }
+  .ai-badge { background: var(--blue); color: #0e1013; font-weight: 700; font-size: 11px;
+              border-radius: 999px; padding: 1px 10px; margin-right: 6px; }
+  .reco-desc { color: var(--dim); font-size: 12.5px; margin-top: 3px; }
+  .reco-why { margin-top: 6px; font-size: 12px; color: var(--faint); }
+  .kw { display: inline-block; background: rgba(96,165,250,.12); color: var(--blue);
+        border-radius: 6px; padding: 0 6px; margin: 0 3px 3px 0; }
+  .scorebar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 8px; width: 180px; }
+  .scorebar i { display: block; height: 100%; background: var(--blue); border-radius: 2px; }
+  .reco-note { color: var(--faint); font-size: 11.5px; margin-top: 4px; }
 
+  /* 相似/漂移聚簇 */
+  .clusters h2 { font-size: 16px; margin: 6px 0 12px; color: var(--red); display: flex; align-items: center; gap: 8px; }
+  .bang { display: inline-flex; width: 20px; height: 20px; border-radius: 50%;
+          background: var(--red); color: #fff; font-weight: 800; font-size: 13px;
+          align-items: center; justify-content: center; flex: none; }
+  .cluster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; margin-bottom: 34px; }
+  .cluster { border: 1.5px solid rgba(248,113,113,.55); border-radius: 14px; padding: 13px 16px;
+             background: linear-gradient(180deg, rgba(248,113,113,.06), transparent 55%), var(--panel); }
+  .cluster .chead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-weight: 700; font-size: 13.5px; }
+  .ctag { font-size: 11px; border-radius: 999px; padding: 1px 9px; }
+  .ctag.drift { background: rgba(240,180,41,.15); color: var(--amber); border: 1px solid rgba(240,180,41,.4); }
+  .ctag.sim { background: rgba(248,113,113,.13); color: var(--red); border: 1px solid rgba(248,113,113,.4); }
+  .member { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 3px 0; font-size: 13px; }
+  .pairs { margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 7px; }
+  .pair { font-size: 12px; color: var(--dim); padding: 1px 0; }
+  .pct { color: var(--red); font-weight: 700; }
+
+  /* 场景聚类 */
   section h2 { font-size: 15px; color: var(--dim); font-weight: 600; margin: 26px 0 12px;
                border-bottom: 1px solid var(--line); padding-bottom: 6px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-          padding: 14px 16px; transition: border-color .15s; }
+          padding: 14px 16px; cursor: pointer; }
   .card:hover { border-color: #3b4250; background: var(--panel2); }
   .card .top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
   .card .name { font-weight: 700; font-size: 14.5px; }
   .badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
   .host { color: #0e1013; font-weight: 600; }
-  .drift { background: rgba(240,180,41,.15); color: var(--amber); border: 1px solid rgba(240,180,41,.4); }
-  .overlap { background: rgba(167,139,250,.12); color: var(--purple); border: 1px solid rgba(167,139,250,.4); cursor: help; }
+  .warn { background: rgba(248,113,113,.12); color: var(--red); border: 1px solid rgba(248,113,113,.4); }
   .desc { color: var(--dim); font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 3;
           -webkit-box-orient: vertical; overflow: hidden; }
   .card.open .desc { -webkit-line-clamp: unset; }
@@ -71,87 +112,249 @@ PAGE = """<!DOCTYPE html>
 </head>
 <body>
 <header><h1>Skill Picker</h1><span class="stats">__STATS__</span></header>
-<div class="hint">点击卡片展开完整描述与路径 · 数据仅来自本机 SKILL.md，刷新请运行 <code>python skillpick.py scan</code></div>
-<input id="search" type="search" placeholder="搜索 skill 名称 / 描述 / 场景…（比如：周报、PPT、飞书）" autofocus>
-__DUPBOX__
+<div class="readonly">✓ 只读模式 — 本工具不会修改、移动或删除任何 skill，仅展示与提醒</div>
+
+<div class="intent-wrap">
+  <input id="intent" type="search" placeholder="输入你的意图，比如：我要做一份周报 / 帮我画个图表 / 写飞书文档…">
+  <div class="intent-hint">输入后即时给出候选 skills、描述与 AI 建议；同时过滤下方全部卡片。会话内的建议由 skill-picker 结合真实上下文给出，这里为本地近似。</div>
+  <div id="reco"></div>
+</div>
+
+<div class="clusters">
+  <h2><span class="bang">!</span>相似 / 漂移聚簇（__NCLUSTER__ 组）— 建议人工确认后自行取舍，工具不代改</h2>
+  <div class="cluster-grid">__CLUSTERS__</div>
+</div>
+
 __SECTIONS__
 <div class="empty" id="empty">没有匹配的 skill</div>
+
 <script>
-  const q = document.getElementById('search');
-  const cards = [...document.querySelectorAll('.card')];
-  const sections = [...document.querySelectorAll('section')];
-  cards.forEach(c => c.addEventListener('click', () => c.classList.toggle('open')));
-  q.addEventListener('input', () => {
-    const kw = q.value.trim().toLowerCase();
-    cards.forEach(c => { c.style.display = c.dataset.text.includes(kw) ? '' : 'none'; });
-    let any = false;
-    sections.forEach(s => {
-      const visible = [...s.querySelectorAll('.card')].some(c => c.style.display !== 'none');
-      s.style.display = visible ? '' : 'none';
-      any = any || visible;
-    });
-    document.getElementById('empty').style.display = any ? 'none' : 'block';
+const SKILLS = __DATA__;
+const STOP = ['我要','我想','帮我','请你','一下','一份','一个','需要','怎么','如何','用哪个','能不能','有没有','什么','skill','skills'];
+const stripStop = s => { STOP.forEach(w => { s = s.split(w).join(''); }); return s; };
+const norm = s => s.toLowerCase().replace(/[^a-z0-9\\u4e00-\\u9fff]+/g, '');
+const bigrams = s => { const r = new Set(); for (let i = 0; i < s.length - 1; i++) r.add(s.slice(i, i+2)); return r; };
+SKILLS.forEach(s => { s._t = norm(s.name + ' ' + s.desc); s._bg = bigrams(s._t); s._cat = norm(s.cat); });
+
+function matchedRuns(intent, text) {  // 贪心找出意图中命中 skill 文本的连续片段（长度>=2）
+  const runs = []; let i = 0;
+  while (i < intent.length) {
+    let best = 0;
+    for (let len = Math.min(12, intent.length - i); len >= 2; len--) {
+      if (text.includes(intent.slice(i, i + len))) { best = len; break; }
+    }
+    if (best >= 2) { runs.push(intent.slice(i, i + best)); i += best; } else i++;
+  }
+  return [...new Set(runs)].slice(0, 5);
+}
+
+const intentEl = document.getElementById('intent');
+const recoEl = document.getElementById('reco');
+const cards = [...document.querySelectorAll('.card')];
+const sections = [...document.querySelectorAll('section')];
+cards.forEach(c => c.addEventListener('click', () => c.classList.toggle('open')));
+
+intentEl.addEventListener('input', () => {
+  const raw = intentEl.value.trim();
+  const q = norm(stripStop(raw)) || norm(raw);
+  // 1) 过滤卡片
+  cards.forEach(c => {
+    const hit = !q || c.dataset.text.includes(q) || [...bigrams(q)].some(g => c.dataset.text.includes(g));
+    c.style.display = hit ? '' : 'none';
   });
+  let any = false;
+  sections.forEach(s => {
+    const vis = [...s.querySelectorAll('.card')].some(c => c.style.display !== 'none');
+    s.style.display = vis ? '' : 'none'; any = any || vis;
+  });
+  document.getElementById('empty').style.display = any ? 'none' : 'block';
+
+  // 2) AI 建议面板
+  if (q.length < 2) { recoEl.className = ''; recoEl.innerHTML = ''; return; }
+  const qb = bigrams(q);
+  const scored = SKILLS.map(s => {
+    let hit = 0; qb.forEach(g => { if (s._bg.has(g)) hit++; });
+    let score = hit / Math.max(qb.size, 1);
+    if (s._t.includes(q)) score += 0.5;                                  // 整串命中加权
+    if (norm(s.name).split('').some((_, i, a) => q.includes(a.slice(i, i + 2).join('')) && a.length > i + 1)) score += 0.15;  // 名字命中
+    let catHit = 0; qb.forEach(g => { if (s._cat.includes(g)) catHit++; });
+    score += 0.05 * Math.min(catHit, 2);                                 // 场景弱加权
+    return { s, score };
+  }).filter(x => x.score > 0.15).sort((a, b) => b.score - a.score).slice(0, 4);
+
+  if (!scored.length) {
+    recoEl.className = 'show';
+    recoEl.innerHTML = '<div class="reco-card"><div class="reco-body">本机没有明显匹配的 skill——可以直接把需求交给 agent 正常处理。</div></div>';
+    return;
+  }
+  const max = scored[0].score;
+  recoEl.className = 'show';
+  recoEl.innerHTML = scored.map((x, i) => {
+    const runs = matchedRuns(q, x.s._t);
+    const kws = runs.map(r => '<span class="kw">' + r + '</span>').join('');
+    return '<div class="reco-card' + (i === 0 ? ' best' : '') + '">' +
+      '<div class="reco-rank">' + (i + 1) + '</div><div class="reco-body">' +
+      '<div>' + (i === 0 ? '<span class="ai-badge">AI 建议</span>' : '') +
+      '<span class="reco-name">' + x.s.name + '</span>' +
+      '<span class="badge host" style="background:' + x.s.color + '">' + x.s.hostLabel + '</span>' +
+      (x.s.warn ? ' <span class="badge warn">⚠ ' + x.s.warn + '</span>' : '') + '</div>' +
+      '<div class="reco-desc">' + x.s.desc + '</div>' +
+      '<div class="reco-why">匹配依据：' + (kws || '<span class="kw">语义近邻</span>') +
+      '　场景：' + x.s.cat + '</div>' +
+      '<div class="scorebar"><i style="width:' + Math.round(100 * x.score / max) + '%"></i></div>' +
+      (i === 0 ? '<div class="reco-note">仅为建议——最终请自行选择；会话内 skill-picker 会结合你的真实上下文重新给出候选。</div>' : '') +
+      '</div></div>';
+  }).join('');
+});
 </script>
 </body>
 </html>
 """
 
 
+def _union_find_clusters(catalog: dict) -> list[dict]:
+    """把同名多份 + 描述重叠的 skill 连成聚簇。"""
+    skills = catalog["skills"]
+    dup = catalog["duplicates"]
+    by_path = {s["path"]: s for s in skills}
+
+    parent: dict[str, str] = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        parent[find(a)] = find(b)
+
+    pair_info: dict[frozenset, str] = {}
+    for g in dup["same_name"]:
+        paths = [c["path"] for c in g["copies"]]
+        for p in paths[1:]:
+            union(paths[0], p)
+        label = "同名漂移" if g["status"] == "drifted" else "同名一致"
+        for i in range(len(paths)):
+            for j in range(i + 1, len(paths)):
+                pair_info[frozenset((paths[i], paths[j]))] = label
+    for o in dup["overlapping"]:
+        union(o["a"]["path"], o["b"]["path"])
+        pair_info[frozenset((o["a"]["path"], o["b"]["path"]))] = f"{o['similarity']:.0%}"
+
+    groups: dict[str, list[str]] = {}
+    for p in parent:
+        groups.setdefault(find(p), []).append(p)
+
+    clusters = []
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        pairs = []
+        for i in range(len(members)):
+            for j in range(i + 1, len(members)):
+                key = frozenset((members[i], members[j]))
+                if key in pair_info:
+                    pairs.append((by_path[members[i]], by_path[members[j]], pair_info[key]))
+        drift = any(v == "同名漂移" for _, _, v in pairs)
+        clusters.append({
+            "members": [by_path[m] for m in members if m in by_path],
+            "pairs": pairs,
+            "drift": drift,
+        })
+    clusters.sort(key=lambda c: (not c["drift"], -len(c["members"])))
+    return clusters
+
+
+def _warn_maps(catalog: dict):
+    dup = catalog["duplicates"]
+    drifted = {g["name"] for g in dup["same_name"] if g["status"] == "drifted"}
+    overlap: dict[str, int] = {}
+    for o in dup["overlapping"]:
+        overlap[o["a"]["path"]] = overlap.get(o["a"]["path"], 0) + 1
+        overlap[o["b"]["path"]] = overlap.get(o["b"]["path"], 0) + 1
+    return drifted, overlap
+
+
 def build_dashboard() -> Path:
     catalog = json.loads(CATALOG_JSON.read_text(encoding="utf-8"))
     skills = catalog["skills"]
-    dup = catalog["duplicates"]
+    drifted, overlap = _warn_maps(catalog)
+    clusters = _union_find_clusters(catalog)
 
-    drifted_names = {g["name"] for g in dup["same_name"] if g["status"] == "drifted"}
-    overlap_partners: dict[str, list[str]] = {}
-    for o in dup["overlapping"]:
-        overlap_partners.setdefault(o["a"]["path"], []).append(o["b"]["name"])
-        overlap_partners.setdefault(o["b"]["path"], []).append(o["a"]["name"])
+    def warn_text(s):
+        w = []
+        if s["dir_name"].lower() in drifted:
+            w.append("同名漂移")
+        if s["path"] in overlap:
+            w.append(f"重叠×{overlap[s['path']]}")
+        return " / ".join(w)
 
+    # 聚簇卡片
+    cluster_html = []
+    for c in clusters:
+        names = {m["name"] for m in c["members"]}
+        tag = '<span class="ctag drift">含同名漂移</span>' if c["drift"] else '<span class="ctag sim">高度相似</span>'
+        member_rows = []
+        for m in sorted(c["members"], key=lambda x: (x["name"].lower(), x["host"])):
+            label, color = HOST_LABELS.get(m["host"], (m["host"], "#888"))
+            member_rows.append(
+                f'<div class="member"><span class="bang" style="width:14px;height:14px;font-size:10px">!</span>'
+                f'<b>{html.escape(m["name"])}</b>'
+                f'<span class="badge host" style="background:{color}">{html.escape(label)}</span></div>')
+        pair_rows = []
+        for a, b, v in sorted(c["pairs"], key=lambda x: x[2], reverse=True):
+            val = f'<span class="pct">{v}</span>' if v.endswith("%") else v
+            pair_rows.append(f'<div class="pair">{html.escape(a["name"])} ({a["host"]}) ↔ '
+                             f'{html.escape(b["name"])} ({b["host"]})：{val}</div>')
+        title = " · ".join(sorted(names)) if len(names) > 1 else next(iter(names))
+        cluster_html.append(
+            f'<div class="cluster"><div class="chead"><span class="bang">!</span>'
+            f'{html.escape(title[:60])}{tag}</div>'
+            f'{"".join(member_rows)}<div class="pairs">{"".join(pair_rows)}</div></div>')
+
+    # 场景分区
     by_cat: dict[str, list[dict]] = {}
     for s in skills:
         by_cat.setdefault(s["category"], []).append(s)
-
     sections = []
     for cat in sorted(by_cat, key=lambda c: -len(by_cat[c])):
         cards = []
         for s in sorted(by_cat[cat], key=lambda x: x["name"].lower()):
             label, color = HOST_LABELS.get(s["host"], (s["host"], "#888"))
-            badges = [f'<span class="badge host" style="background:{color}">{html.escape(label)}</span>']
-            if s["dir_name"].lower() in drifted_names:
-                badges.append('<span class="badge drift">同名漂移</span>')
-            partners = overlap_partners.get(s["path"])
-            if partners:
-                tip = html.escape("可能与这些 skill 功能重叠: " + ", ".join(sorted(set(partners))))
-                badges.append(f'<span class="badge overlap" title="{tip}">重叠 ×{len(set(partners))}</span>')
+            w = warn_text(s)
+            warn_badge = f'<span class="badge warn">! {html.escape(w)}</span>' if w else ""
             text = html.escape(f"{s['name']} {s['description']} {cat}".lower(), quote=True)
+            text = "".join(ch for ch in text if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
             cards.append(
                 f'<div class="card" data-text="{text}">'
-                f'<div class="top"><span class="name">{html.escape(s["name"])}</span>{"".join(badges)}</div>'
+                f'<div class="top"><span class="name">{html.escape(s["name"])}</span>'
+                f'<span class="badge host" style="background:{color}">{html.escape(label)}</span>{warn_badge}</div>'
                 f'<div class="desc">{html.escape(s["description"]) or "（无描述）"}</div>'
-                f'<div class="path">{html.escape(s["path"])}</div></div>'
-            )
+                f'<div class="path">{html.escape(s["path"])}</div></div>')
         sections.append(f"<section><h2>{html.escape(cat)}（{len(cards)}）</h2>"
                         f'<div class="grid">{"".join(cards)}</div></section>')
 
-    dupbox = ""
-    if dup["same_name"]:
-        items = []
-        for g in dup["same_name"]:
-            status = "内容已漂移，唤醒时行为可能不一致" if g["status"] == "drifted" else "内容一致"
-            hosts = " + ".join(c["host"] for c in g["copies"])
-            items.append(f"<li><b>{html.escape(g['name'])}</b>（{hosts}）— {status}</li>")
-        dupbox = (f'<div class="dupbox"><h2>⚠ 同名多份 {len(dup["same_name"])} 组'
-                  f'（漂移 {len(drifted_names)} 组）— 建议合并，工具只提示不代删</h2>'
-                  f'<ul>{"".join(items)}</ul></div>')
+    # 给 JS 的数据
+    js_data = []
+    for s in skills:
+        label, color = HOST_LABELS.get(s["host"], (s["host"], "#888"))
+        js_data.append({
+            "name": s["name"], "desc": s["description"][:220], "cat": s["category"],
+            "hostLabel": label, "color": color, "warn": warn_text(s),
+        })
+    data_json = json.dumps(js_data, ensure_ascii=False).replace("</", "<\\/")
 
     stats = (f"{catalog['skill_count']} 个 skill · {len(by_cat)} 个场景 · "
-             f"描述重叠 {len(dup['overlapping'])} 对 · 生成于 {catalog['generated_at'][:16]} UTC")
+             f"{len(clusters)} 组相似/漂移聚簇 · 生成于 {catalog['generated_at'][:16]} UTC")
 
     page = (PAGE.replace("__STATS__", stats)
-                .replace("__DUPBOX__", dupbox)
-                .replace("__SECTIONS__", "".join(sections)))
+                .replace("__NCLUSTER__", str(len(clusters)))
+                .replace("__CLUSTERS__", "".join(cluster_html) or
+                         '<div style="color:var(--dim)">未发现相似或漂移的 skills。</div>')
+                .replace("__SECTIONS__", "".join(sections))
+                .replace("__DATA__", data_json))
     DASHBOARD_HTML.write_text(page, encoding="utf-8")
     return DASHBOARD_HTML
 
