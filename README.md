@@ -29,6 +29,7 @@ skill-picker 就会被唤醒并弹出候选让你选择。
 |---|---|
 | `python skillpick.py scan` | 扫描所有 skill 目录，生成/刷新 catalog |
 | `python skillpick.py install` | scan + 安装 meta-skill 到各宿主 |
+| `python skillpick.py check` | scan + 门禁校验（退出码 0=可信 / 2=覆盖不全） |
 | `python skillpick.py report` | 打印当前 catalog |
 
 ## 工作原理
@@ -55,6 +56,24 @@ skill-picker 就会被唤醒并弹出候选让你选择。
    被唤醒后 agent 读 catalog，找出 2-4 个候选，用宿主的提问工具
    （Cursor: AskQuestion / Claude Code: AskUserQuestion）让用户点选，
    选定后再读取并执行该 skill 的 SKILL.md。候选间若有漂移或重叠会明确提示。
+
+## 强制门禁（每次 scan 自动执行）
+
+不同用户的本机环境不一样，工具靠三道门禁保证自己"全和准"，而不是靠写死路径：
+
+| 门禁 | 校验什么 | 不过会怎样 |
+|---|---|---|
+| **G1 覆盖率（全）** | 在所有 agent 相关目录全盘搜 `SKILL.md`，与扫描根比对，任何未覆盖文件都算 FAIL | `scan`/`check` 退出码 2；catalog 与页面顶部标红；meta-skill 会提醒用户"匹配结果不完整" |
+| **G2 解析质量（准）** | 缺有效描述的 skill 占比 ≤10% | WARN，列出问题 skill |
+| **G3 漂移提醒** | 同名 skill 跨端内容是否一致 | WARN，指引到「理技能」tab 人工取舍 |
+
+G1 未通过时的处理：把未覆盖目录写进 `~/.skill-picker/config.json`：
+
+```json
+{ "extra_roots": [ { "path": "D:/some/custom/skills", "host": "custom" } ] }
+```
+
+再跑 `python skillpick.py check` 直到 PASS。CI/定时任务可直接用退出码判断（0=可信，2=覆盖不全）。
 
 ## 说明
 

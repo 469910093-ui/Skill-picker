@@ -13,6 +13,7 @@
 
 import hashlib
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -27,12 +28,40 @@ SELF_NAME = "skill-picker"
 # 扫描根目录 -> 宿主标签。存在才扫，不存在跳过。
 SCAN_ROOTS = [
     (HOME / ".claude" / "skills", "claude-code"),
+    (HOME / ".claude" / "plugins", "claude-plugin"),
     (HOME / ".cursor" / "skills", "cursor"),
     (HOME / ".cursor" / "skills-cursor", "cursor-builtin"),
     (HOME / ".cursor" / "plugins" / "cache", "cursor-plugin"),
     (HOME / ".agents" / "skills", "codex"),
+    (HOME / ".agents" / "plugins", "codex-plugin"),
+    (HOME / ".codex" / "skills", "codex"),
+    (HOME / ".codex" / "plugins" / "cache", "codex-plugin"),
     (HOME / ".openclaw" / "skills", "openclaw"),
+    (HOME / ".openclaw" / "workspace" / "skills", "openclaw"),
+    (HOME / ".gemini" / "skills", "gemini"),
 ]
+
+# 覆盖率门禁的全盘发现范围：这些基目录下任何 SKILL.md 都必须被扫描根覆盖
+DISCOVER_BASES = [
+    HOME / ".claude", HOME / ".cursor", HOME / ".agents",
+    HOME / ".codex", HOME / ".openclaw", HOME / ".gemini", HOME / ".config",
+]
+PRUNE_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "venv", "dist", "build",
+              "terminals", "agent-transcripts", ".tmp", "tmp"}
+CONFIG_JSON = DATA_DIR / "config.json"
+
+
+def load_scan_roots() -> list[tuple[Path, str]]:
+    """内置扫描根 + 用户自定义目录（~/.skill-picker/config.json 的 extra_roots）。"""
+    roots = list(SCAN_ROOTS)
+    if CONFIG_JSON.exists():
+        try:
+            cfg = json.loads(CONFIG_JSON.read_text(encoding="utf-8"))
+            for item in cfg.get("extra_roots", []):
+                roots.append((Path(item["path"]), item.get("host", "custom")))
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            print(f"[warn] config.json 解析失败，忽略 extra_roots: {e}")
+    return roots
 
 # meta-skill 的安装目标（MVP: Cursor + Claude Code）
 INSTALL_TARGETS = {
@@ -142,7 +171,7 @@ def fallback_meta(text: str) -> dict:
 
 def scan_skills() -> list[dict]:
     skills, seen_paths = [], set()
-    for root, host in SCAN_ROOTS:
+    for root, host in load_scan_roots():
         if not root.is_dir():
             continue
         for skill_md in sorted(root.rglob("SKILL.md")):
@@ -222,6 +251,77 @@ def find_duplicates(skills: list[dict]) -> dict:
     return {"same_name": same_name, "overlapping": overlaps}
 
 
+# ---------------------------------------------------------------- 门禁
+
+def discover_all_skill_files() -> list[Path]:
+    """全盘发现：DISCOVER_BASES 下所有 SKILL.md（剪枝重型目录）。这是覆盖率的地面真值。"""
+    found = []
+    for base in DISCOVER_BASES:
+        if not base.is_dir():
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [d for d in dirnames if d not in PRUNE_DIRS]
+            if "SKILL.md" in filenames:
+                found.append(Path(dirpath) / "SKILL.md")
+    return found
+
+
+def run_gates(catalog: dict) -> list[dict]:
+    """三道强制门禁：G1 覆盖率（全）/ G2 解析质量（准）/ G3 漂移提醒。
+
+    G1 不通过意味着 catalog 不完整、匹配结果不可信，必须处理
+    （把未覆盖目录加入 ~/.skill-picker/config.json 的 extra_roots，或报 issue）。
+    """
+    # 用字面路径比较：skills 目录里常见符号链接（如指向 awesome-claude-skills 仓库），
+    # resolve 会把链接解析到根目录之外，造成覆盖误报
+    roots = [os.path.normcase(str(r)) for r, _ in load_scan_roots() if r.is_dir()]
+
+    def covered(p: Path) -> bool:
+        n = os.path.normcase(str(p))
+        return any(n.startswith(r + os.sep) or n == r for r in roots)
+
+    all_files = discover_all_skill_files()
+    uncovered = sorted(str(p) for p in all_files if not covered(p))
+    gates = [{
+        "id": "G1", "name": "覆盖率（全）",
+        "status": "pass" if not uncovered else "fail",
+        "detail": f"全盘发现 {len(all_files)} 个 SKILL.md，未被扫描根覆盖 {len(uncovered)} 个",
+        "items": uncovered[:30],
+        "action": "" if not uncovered else
+                  f'把上述目录加入 {CONFIG_JSON} 的 extra_roots 后重新 scan',
+    }]
+
+    no_desc = [s["name"] for s in catalog["skills"] if len(s["description"]) < 10]
+    ratio = len(no_desc) / max(len(catalog["skills"]), 1)
+    gates.append({
+        "id": "G2", "name": "解析质量（准）",
+        "status": "pass" if ratio <= 0.10 else "warn",
+        "detail": f"{len(no_desc)} 个 skill 缺有效描述（占 {ratio:.0%}，阈值 10%），已回退用正文首段/关键词参与匹配",
+        "items": no_desc[:30],
+        "action": "",
+    })
+
+    drifted = [d["name"] for d in catalog["duplicates"]["same_name"] if d["status"] == "drifted"]
+    gates.append({
+        "id": "G3", "name": "漂移提醒",
+        "status": "pass" if not drifted else "warn",
+        "detail": f"{len(drifted)} 组同名 skill 内容漂移（多端行为可能不一致）",
+        "items": drifted,
+        "action": "" if not drifted else "在「理技能」tab 查看差异，确认后自行合并（工具不代改）",
+    })
+    return gates
+
+
+def print_gates(gates: list[dict]) -> None:
+    mark = {"pass": "PASS", "warn": "WARN", "fail": "FAIL"}
+    for g in gates:
+        print(f"[gate {g['id']}] {mark[g['status']]}  {g['name']}: {g['detail']}")
+        for it in g["items"][:5]:
+            print(f"    - {it}")
+        if g.get("action"):
+            print(f"    => {g['action']}")
+
+
 # ---------------------------------------------------------------- 聚类
 
 def categorize(skill: dict) -> str:
@@ -260,6 +360,15 @@ def write_catalog_md(catalog: dict) -> None:
         "> 由 skill-picker 自动生成。刷新: `python skillpick.py scan`",
         "",
     ]
+    for g in catalog.get("gates", []):
+        mark = {"pass": "✅", "warn": "⚠️", "fail": "❌"}[g["status"]]
+        lines.append(f"- {mark} **{g['id']} {g['name']}** {g['status'].upper()}：{g['detail']}")
+        if g["status"] != "pass" and g.get("action"):
+            lines.append(f"  - 处理：{g['action']}")
+        for it in g["items"][:10]:
+            if g["status"] != "pass":
+                lines.append(f"  - `{it}`")
+    lines.append("")
     by_cat: dict[str, list[dict]] = {}
     for s in catalog["skills"]:
         by_cat.setdefault(s["category"], []).append(s)
@@ -311,6 +420,9 @@ description: 本机 skills 路由器。当用户想不起某个 skill 的名字�
 1. 读取 catalog（本机 skills 索引，已按场景分组并标注重复）:
    `{catalog_md}`
    如果该文件不存在或超过 7 天未更新，先运行刷新命令（见下方）再读取。
+   **门禁检查**：catalog 开头如有「G1 覆盖率 FAIL」，说明本机存在未被索引的 skills，
+   匹配结果不完整——必须提醒用户，并给出把未覆盖目录加入
+   `~/.skill-picker/config.json` 的 `extra_roots` 的具体写法，然后重新 scan。
 
 2. 根据用户意图，在 catalog 中找出最匹配的 **2-4 个候选 skill**。
    匹配依据是各 skill 的 description 与场景分类，不要只靠名字猜。
@@ -368,6 +480,7 @@ def install_meta_skill() -> None:
 def cmd_scan() -> dict:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     catalog = build_catalog()
+    catalog["gates"] = run_gates(catalog)
     CATALOG_JSON.write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
     write_catalog_md(catalog)
     try:
@@ -383,6 +496,9 @@ def cmd_scan() -> dict:
     print(f"[scan] 同名多份 {len(dup['same_name'])} 组（其中漂移 {len(drifted)} 组），"
           f"描述重叠 {len(dup['overlapping'])} 对")
     print(f"[scan] catalog 已写入 {CATALOG_MD}")
+    print_gates(catalog["gates"])
+    if any(g["status"] == "fail" for g in catalog["gates"]):
+        print("[gate] 存在 FAIL 门禁：catalog 覆盖不完整，匹配结果不可信，请先处理！")
     return catalog
 
 
@@ -398,7 +514,11 @@ def main() -> None:
         sys.stdout.reconfigure(encoding="utf-8")  # Windows 控制台默认 GBK，避免中文乱码
     cmd = sys.argv[1] if len(sys.argv) > 1 else "scan"
     if cmd == "scan":
-        cmd_scan()
+        catalog = cmd_scan()
+        sys.exit(2 if any(g["status"] == "fail" for g in catalog["gates"]) else 0)
+    elif cmd == "check":
+        catalog = cmd_scan()
+        sys.exit(2 if any(g["status"] == "fail" for g in catalog["gates"]) else 0)
     elif cmd == "install":
         cmd_scan()
         install_meta_skill()

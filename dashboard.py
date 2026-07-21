@@ -23,8 +23,12 @@ HOST_LABELS = {
     "cursor": ("Cursor", "#7c8cf8"),
     "cursor-builtin": ("Cursor 内置", "#5560c8"),
     "cursor-plugin": ("Cursor 插件", "#38bdf8"),
+    "claude-plugin": ("Claude 插件", "#e8956d"),
     "codex": ("Codex", "#3aa981"),
+    "codex-plugin": ("Codex 插件", "#2dd4bf"),
     "openclaw": ("OpenClaw", "#b58a3d"),
+    "gemini": ("Gemini", "#8ab4f8"),
+    "custom": ("自定义", "#9ca3af"),
 }
 
 PAGE = """<!DOCTYPE html>
@@ -125,6 +129,7 @@ PAGE = """<!DOCTYPE html>
 <body>
 <header><h1>Skill Picker</h1><span class="stats">__STATS__</span></header>
 <div class="readonly">✓ 只读模式 — 本工具不会修改、移动或删除任何 skill，仅展示与提醒</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin:-6px 0 16px">__GATES__</div>
 
 <div class="tabs">
   <button class="tabbtn active" data-tab="find">🔍 找技能<span class="n">意图匹配 · AI 建议</span></button>
@@ -142,6 +147,7 @@ PAGE = """<!DOCTYPE html>
 </div>
 
 <div class="tabpane" id="tab-tidy">
+  __GATE_DETAIL__
   <div class="clusters">
     <h2><span class="bang">!</span>相似 / 漂移聚簇检查（__NCLUSTER__ 组）— 建议人工确认后自行取舍，工具不代改</h2>
     <div class="cluster-grid">__CLUSTERS__</div>
@@ -510,7 +516,34 @@ def build_dashboard() -> Path:
              f"{len(by_cat)} 个场景 · {len(clusters)} 组相似/漂移聚簇 · "
              f"生成于 {catalog['generated_at'][:16]} UTC")
 
+    # 门禁徽章与详情
+    gate_colors = {"pass": ("rgba(74,222,128,.1)", "#4ade80", "rgba(74,222,128,.35)"),
+                   "warn": ("rgba(240,180,41,.1)", "#f0b429", "rgba(240,180,41,.4)"),
+                   "fail": ("rgba(248,113,113,.12)", "#f87171", "rgba(248,113,113,.5)")}
+    gate_pills, gate_detail = [], []
+    for g in catalog.get("gates", []):
+        bg, fg, bd = gate_colors[g["status"]]
+        mark = {"pass": "✓", "warn": "⚠", "fail": "✗"}[g["status"]]
+        gate_pills.append(
+            f'<span style="font-size:12px;border-radius:999px;padding:2px 12px;'
+            f'background:{bg};color:{fg};border:1px solid {bd}" title="{html.escape(g["detail"])}">'
+            f'{mark} {g["id"]} {html.escape(g["name"])}</span>')
+        if g["status"] != "pass":
+            items = "".join(f'<li style="color:var(--dim);font-size:12px;margin-left:18px">'
+                            f'<code>{html.escape(it)}</code></li>' for it in g["items"][:15])
+            action = (f'<div style="color:{fg};font-size:12.5px;margin-top:4px">处理：'
+                      f'{html.escape(g["action"])}</div>' if g.get("action") else "")
+            gate_detail.append(
+                f'<div style="border:1px solid {bd};border-radius:12px;padding:12px 16px;'
+                f'margin-bottom:14px;background:{bg}">'
+                f'<b style="color:{fg}">{mark} {g["id"]} {html.escape(g["name"])} '
+                f'{g["status"].upper()}</b>'
+                f'<div style="color:var(--dim);font-size:13px;margin-top:2px">{html.escape(g["detail"])}</div>'
+                f'<ul>{items}</ul>{action}</div>')
+
     page = (PAGE.replace("__STATS__", stats)
+                .replace("__GATES__", "".join(gate_pills))
+                .replace("__GATE_DETAIL__", "".join(gate_detail))
                 .replace("__NCLUSTER__", str(len(clusters)))
                 .replace("__CLUSTERS__", "".join(cluster_html) or
                          '<div style="color:var(--dim)">未发现相似或漂移的 skills。</div>')
