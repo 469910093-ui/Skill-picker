@@ -177,6 +177,12 @@ def scan_skills() -> list[dict]:
         for skill_md in sorted(root.rglob("SKILL.md")):
             if "node_modules" in skill_md.parts:
                 continue
+            # 跳过 skill 包内部再嵌套的 plugins/.../skills/...（如 frontend-slides 自带插件包）
+            parts = skill_md.parts
+            if "skills" in parts:
+                i = parts.index("skills")
+                if "plugins" in parts[i + 1:]:
+                    continue
             resolved = str(skill_md.resolve()).lower()
             if resolved in seen_paths:
                 continue
@@ -221,9 +227,24 @@ def find_duplicates(skills: list[dict]) -> dict:
     for s in skills:
         by_name.setdefault(s["dir_name"].lower(), []).append(s)
 
+    def _distinct_external_plugins(group: list[dict]) -> bool:
+        """discord/imessage/telegram 各自的 access/configure 只是同名，不是重复安装。"""
+        products = set()
+        for g in group:
+            parts = Path(g["path"]).parts
+            if "external_plugins" not in parts:
+                return False
+            i = parts.index("external_plugins")
+            if i + 1 >= len(parts):
+                return False
+            products.add(parts[i + 1])
+        return len(products) == len(group) and len(products) > 1
+
     same_name = []
     for name, group in sorted(by_name.items()):
         if len(group) < 2:
+            continue
+        if _distinct_external_plugins(group):
             continue
         hashes = {g["sha256"] for g in group}
         same_name.append({
