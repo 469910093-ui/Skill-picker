@@ -29,6 +29,7 @@ SCAN_ROOTS = [
     (HOME / ".claude" / "skills", "claude-code"),
     (HOME / ".cursor" / "skills", "cursor"),
     (HOME / ".cursor" / "skills-cursor", "cursor-builtin"),
+    (HOME / ".cursor" / "plugins" / "cache", "cursor-plugin"),
     (HOME / ".agents" / "skills", "codex"),
     (HOME / ".openclaw" / "skills", "openclaw"),
 ]
@@ -52,7 +53,8 @@ CATEGORY_RULES = [
                         "image", "seedance", "即梦", "cowart", "生成图", "canvas"]),
     ("写作/内容运营", ["写作", "文章", "爆款", "文案", "小红书", "公众号", "咪蒙", "viral",
                        "内容 ip", "自媒体", "notebooklm", "解读", "播客", "digest"]),
-    ("设计/Figma", ["figma", "figjam", "design system", "code connect"]),
+    ("设计/Figma", ["figma", "figjam", "design system", "code connect", "design", "设计",
+                     " ui ", "mockup", "界面", "prototype", "原型"]),
     ("Notion", ["notion"]),
     ("云/AWS/运维", ["aws", "bedrock", "lambda", "cloudformation", "cdk", "iam", "datadog",
                      "serverless", "amplify", "ecs", "s3", "dynamodb", "boto3"]),

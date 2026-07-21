@@ -22,6 +22,7 @@ HOST_LABELS = {
     "claude-code": ("Claude Code", "#d97757"),
     "cursor": ("Cursor", "#7c8cf8"),
     "cursor-builtin": ("Cursor 内置", "#5560c8"),
+    "cursor-plugin": ("Cursor 插件", "#38bdf8"),
     "codex": ("Codex", "#3aa981"),
     "openclaw": ("OpenClaw", "#b58a3d"),
 }
@@ -194,7 +195,9 @@ const SYN = {
   '会议': 'meeting minutes 纪要', '邮件': 'mail email', '日程': 'calendar schedule',
   '地图': 'map poi 位置', '播客': 'podcast 音频', '翻译': 'translate translation',
   '爬虫': 'crawl scrape fetch', '部署': 'deploy deployment 发布', '测试': 'test testing qa',
-  '海报': 'poster infographic 信息图', '信息图': 'infographic poster',
+  '海报': 'poster infographic 信息图 design', '信息图': 'infographic poster',
+  '设计': 'design designer figma ui ux mockup 界面 原型', '平面': 'design graphic poster figma 海报 视觉',
+  '原型': 'prototype mockup figma design', '界面': 'ui ux design figma mockup',
   '写作': 'write writing 文章 文案', '文案': 'copy copywriting 写作 write',
   '数据': 'data bigquery sql 分析', '分析': 'analysis analytics 数据',
   '皮肤': 'theme 主题', '插件': 'plugin extension 扩展',
