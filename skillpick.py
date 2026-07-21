@@ -30,7 +30,7 @@ CATALOG_JSON = DATA_DIR / "catalog.json"
 CATALOG_MD = DATA_DIR / "catalog.md"
 CONFIG_JSON = DATA_DIR / "config.json"
 SELF_NAME = "skill-picker"
-TOOL_FILES = ["skillpick.py", "matching.py", "dashboard.py", "rules.json"]
+TOOL_FILES = ["skillpick.py", "matching.py", "dashboard.py", "rules.json", "translations.json"]
 
 # 扫描根目录 -> 宿主标签。存在才扫，不存在跳过。
 SCAN_ROOTS = [
@@ -433,7 +433,8 @@ META_SKILL_TEMPLATE = """---
 name: skill-picker
 description: >-
   Use when 用户想不起某个 skill 的名字、不确定该用哪个 skill、
-  询问"有没有 / 用哪个 skill 能做 X"、想知道本机装了哪些 skills、
+  询问"有没有 / 用哪个 skill 能做 X"、说"查找一下本机最适合的 skills"、
+  "使用本机 skills 帮我做 X"、"用本机的 skill 来做"、想知道本机装了哪些 skills、
   在多个相似 skills 之间犹豫不决，或要求打开 skills 看板、
   浏览/筛选/清理本机 skills 时使用。
   用户已明确点名某个具体 skill、或任务本身与 skill 选择无关时不要使用。
@@ -481,7 +482,14 @@ description: >-
 
 ## 打开看板（对话侧边栏的筛选 / 清理界面）
 
-用户说「打开 skills 看板 / 理技能 / 看看重复的 skills / 清理 skills / skill 总览」时：
+以下两类话术都**必须弹出看板页面**让用户自己看着选，而不是只在对话里列文字候选：
+
+- 浏览/清理类：「打开 skills 看板 / 理技能 / 看看重复的 skills / 清理 skills / skill 总览」
+- **带意图的查找类**：「查找一下本机最适合的 skills」「使用本机 skills 帮我做 ppt」
+  「用本机的 skill 来做 X」——凡是用户明确提到"本机 skills"并带任务意图的，
+  打开看板时把意图挂到 URL 上：`http://127.0.0.1:<端口>/dashboard.html#q=<URL编码的意图>`，
+  页面会自动预填输入框并呈现候选与 AI 建议；同时仍在对话里跑 match 给出可点选项
+  （页面供浏览，最终选择在对话内确认）。
 
 1. **后台**启动本地预览（自动选端口，输出访问 URL；必须后台运行，serve 是常驻进程，
    前台跑会阻塞后续步骤）：

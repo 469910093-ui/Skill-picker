@@ -14,6 +14,7 @@ JS 是同构镜像，禁止在本文件手写 SYN/权重。
 
 import html
 import json
+import re
 from pathlib import Path
 
 import matching
@@ -21,6 +22,37 @@ import matching
 DATA_DIR = Path.home() / ".skill-picker"
 CATALOG_JSON = DATA_DIR / "catalog.json"
 DASHBOARD_HTML = DATA_DIR / "dashboard.html"
+TRANSLATIONS_PATH = Path(__file__).resolve().parent / "translations.json"
+
+# 分类名双语
+CAT_EN = {
+    "飞书/Lark 办公": "Feishu / Lark Office",
+    "周报/复盘/数据分析": "Reports & Analytics",
+    "PPT/演示": "Slides & Decks",
+    "图表/可视化": "Charts & Visualization",
+    "视频/图像/创意": "Video / Image / Creative",
+    "写作/内容运营": "Writing & Content",
+    "设计/Figma": "Design / Figma",
+    "Notion": "Notion",
+    "云/AWS/运维": "Cloud / AWS / Ops",
+    "Agent/开发工具链": "Agent & Dev Toolchain",
+    "出行/电商业务": "Travel & E-commerce",
+    "其他": "Others",
+}
+GATE_EN = {"G1": "Coverage", "G2": "Parse quality", "G3": "Drift", "G4": "Golden queries"}
+
+
+def _is_zh(text: str) -> bool:
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", text))
+    return cjk >= max(6, len(text) * 0.12)
+
+
+def load_translations() -> dict:
+    if TRANSLATIONS_PATH.exists():
+        data = json.loads(TRANSLATIONS_PATH.read_text(encoding="utf-8"))
+        data.pop("_comment", None)
+        return data
+    return {}
 
 HOST_LABELS = {
     "claude-code": ("Claude Code", "#d97757"),
@@ -121,6 +153,11 @@ PAGE = """<!DOCTYPE html>
   .badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
   .host { color: #0e1013; font-weight: 600; }
   .warn { background: rgba(248,113,113,.12); color: var(--red); border: 1px solid rgba(248,113,113,.4); }
+  .langbtn { background: none; border: 1px solid var(--line); color: var(--dim);
+             border-radius: 8px; font-size: 12px; padding: 4px 12px; cursor: pointer;
+             font-family: inherit; }
+  .langbtn.active { color: var(--text); border-color: var(--blue); background: rgba(96,165,250,.1); }
+  .mt-note { color: var(--faint); font-size: 10.5px; margin-top: 4px; }
   .copybtn { background: none; border: 1px solid var(--line); color: var(--faint);
              border-radius: 6px; font-size: 11px; line-height: 1; padding: 3px 7px;
              cursor: pointer; font-family: inherit; flex: none; }
@@ -136,29 +173,41 @@ PAGE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<header><h1>Skill Picker</h1><span class="stats">__STATS__</span></header>
-<div class="readonly">✓ 只读模式 — 本工具不会修改、移动或删除任何 skill，仅展示与提醒</div>
+<header>
+  <h1>Skill Picker</h1><span class="stats">__STATS__</span>
+  <span style="margin-left:auto;display:inline-flex;gap:4px">
+    <button class="langbtn" data-lang="zh">中文</button>
+    <button class="langbtn" data-lang="en">EN</button>
+  </span>
+</header>
+<div class="readonly" data-zh="✓ 只读模式 — 本工具不会修改、移动或删除任何 skill，仅展示与提醒"
+     data-en="✓ Read-only — this tool never modifies, moves or deletes any skill; display & remind only"></div>
 <div style="display:flex;gap:8px;flex-wrap:wrap;margin:-6px 0 16px">__GATES__</div>
 
 <div class="tabs">
-  <button class="tabbtn active" data-tab="find">🔍 找技能<span class="n">意图匹配 · AI 建议</span></button>
-  <button class="tabbtn t2" data-tab="tidy">🩺 理技能<span class="n">相似/漂移自查 · __NCLUSTER__ 组</span></button>
+  <button class="tabbtn active" data-tab="find">🔍 <span data-zh="找技能" data-en="Find"></span><span class="n" data-zh="意图匹配 · AI 建议" data-en="intent match · AI pick"></span></button>
+  <button class="tabbtn t2" data-tab="tidy">🩺 <span data-zh="理技能" data-en="Tidy"></span><span class="n" data-zh="相似/漂移自查 · __NCLUSTER__ 组" data-en="similarity/drift check · __NCLUSTER__ groups"></span></button>
 </div>
 
 <div class="tabpane active" id="tab-find">
   <div class="intent-wrap">
-    <input id="intent" type="search" placeholder="输入你的意图，比如：我要做一份周报 / 帮我画个图表 / 写飞书文档…">
-    <div class="intent-hint">输入后即时给出候选 skills、描述与 AI 建议；同时按关联度过滤下方卡片。会话内的建议由 skill-picker 结合真实上下文给出，这里为本地近似。</div>
+    <input id="intent" type="search"
+           data-ph-zh="输入你的意图，比如：我要做一份周报 / 帮我画个图表 / 写飞书文档…"
+           data-ph-en="Describe your intent, e.g. make a weekly report / draw a chart / edit a video…">
+    <div class="intent-hint"
+         data-zh="输入后即时给出候选 skills、描述与 AI 建议；同时按关联度过滤下方卡片。会话内的建议由 skill-picker 结合真实上下文给出，这里为本地近似。"
+         data-en="Type to get instant candidates with descriptions and an AI pick; cards below are filtered by relevance. In-chat suggestions use real session context; this page is a local approximation."></div>
     <div id="reco"></div>
   </div>
   <div id="sections">__SECTIONS__</div>
-  <div class="empty" id="empty">没有匹配的 skill</div>
+  <div class="empty" id="empty" data-zh="没有匹配的 skill" data-en="No matching skill"></div>
 </div>
 
 <div class="tabpane" id="tab-tidy">
   __GATE_DETAIL__
   <div class="clusters">
-    <h2><span class="bang">!</span>相似 / 漂移聚簇检查（__NCLUSTER__ 组）— 建议人工确认后自行取舍，工具不代改</h2>
+    <h2><span class="bang">!</span><span data-zh="相似 / 漂移聚簇检查（__NCLUSTER__ 组）— 建议人工确认后自行取舍，工具不代改"
+        data-en="Similarity / drift clusters (__NCLUSTER__ groups) — review manually; the tool never auto-fixes"></span></h2>
     <div class="cluster-grid">__CLUSTERS__</div>
   </div>
 </div>
@@ -193,13 +242,34 @@ function tokenize(s, {query=false} = {}) {
   return toks;
 }
 
-// 预处理字段 token + IDF（token 在越多 skill 里出现，权重越低）
+// 预处理字段 token + IDF；描述用中英双语一起建索引（中文意图也能打中英文 skill，反之亦然）
 const DF = new Map();
 SKILLS.forEach(s => {
-  s._name = tokenize(s.name); s._desc = tokenize(s.desc); s._kw = tokenize(s.kw || ''); s._cat = norm(s.cat);
-  s._nt = norm(s.name); s._dt = norm(s.desc); s._kt = norm(s.kw || '');
+  s._name = tokenize(s.name);
+  s._desc = tokenize((s.descZh || '') + ' ' + (s.descEn || ''));
+  s._kw = tokenize(s.kw || ''); s._cat = norm(s.cat);
+  s._nt = norm(s.name); s._dt = norm((s.descZh || '') + ' ' + (s.descEn || '')); s._kt = norm(s.kw || '');
   new Set([...s._name, ...s._desc, ...s._kw]).forEach(t => DF.set(t, (DF.get(t) || 0) + 1));
 });
+const byName = new Map(SKILLS.map(s => [s.name, s]));
+
+// 界面文案双语
+const STR = {
+  zh: {aiPick:'AI 建议', match:'匹配依据：', scene:'　场景：', weak:'弱相关', cross:'名称+描述交叉命中',
+       note:'仅为建议——最终请自行选择；会话内 skill-picker 会结合你的真实上下文重新给出候选。',
+       none:'本机没有明显匹配的 skill——可以直接把需求交给 agent 正常处理。',
+       name:'名称·', desc:'描述·', body:'正文·', syn:'近义·',
+       mt:'AI 译文，原文以 SKILL.md 为准'},
+  en: {aiPick:'AI pick', match:'Matched: ', scene:'　Category: ', weak:'weak match', cross:'name+desc cross-hit',
+       note:'Suggestion only — you decide; the in-chat skill-picker re-ranks with real session context.',
+       none:'No obvious match on this machine — just describe the task to the agent directly.',
+       name:'name·', desc:'desc·', body:'body·', syn:'syn·',
+       mt:'AI-translated; the SKILL.md is the source of truth'}
+};
+let LANG = localStorage.getItem('sp-lang') || 'zh';
+const sDesc = s => (LANG === 'zh' ? s.descZh : s.descEn) || s.desc;
+const sMt = s => LANG === 'zh' ? s.mtZh : s.mtEn;
+const sCat = s => LANG === 'zh' ? s.cat : s.catEn;
 const N = SKILLS.length;
 const idf = t => DF.has(t) ? Math.log(1 + N / DF.get(t)) : 0;
 
@@ -271,20 +341,33 @@ async function copyText(text, btn) {
     ta.value = text; document.body.appendChild(ta);
     ta.select(); document.execCommand('copy'); ta.remove();
   }
-  btn.textContent = '✓ 已复制'; btn.classList.add('ok');
-  setTimeout(() => { btn.textContent = '⧉ 复制'; btn.classList.remove('ok'); }, 1200);
+  const prev = btn.textContent;
+  btn.textContent = '✓'; btn.classList.add('ok');
+  setTimeout(() => { btn.textContent = prev; btn.classList.remove('ok'); }, 1200);
 }
 document.addEventListener('click', e => {
   const b = e.target.closest('.copybtn');
   if (b) copyText(b.dataset.copy, b);
 });
 
+// 支持 #q=<意图> 预填：agent 弹出页面时直接带上用户意图，候选即刻呈现
+// 注意：首次调用在脚本末尾（须等 input 监听器注册完成）
+function applyHashQuery() {
+  const m = location.hash.match(/^#q=(.+)$/);
+  if (!m) return;
+  intentEl.value = decodeURIComponent(m[1]);
+  intentEl.dispatchEvent(new Event('input'));
+  intentEl.focus();
+}
+window.addEventListener('hashchange', applyHashQuery);
+
 intentEl.addEventListener('input', () => {
   const raw = intentEl.value.trim();
-  const q = (norm(stripStop(raw)) || norm(raw)).replace(/ /g, '');
+  const q = norm(stripStop(raw)) || norm(raw);       // 保留空格：英文分词依赖词边界
+  const qCompact = q.replace(/ /g, '');              // 紧凑形式只用于子串比较
 
   // 无意图（或太短）：全部显示，恢复默认顺序
-  if (q.length < 2) {
+  if (qCompact.length < 2) {
     recoEl.className = ''; recoEl.innerHTML = '';
     cards.forEach(c => { c.style.display = ''; });
     sections.forEach(s => { s.style.display = ''; });
@@ -321,12 +404,13 @@ intentEl.addEventListener('input', () => {
   const scoreMap = new Map(all.map(x => [x.s.name, x.score]));
   const scored = all.filter(x => x.score > W.min_score).sort((a, b) => b.score - a.score).slice(0, 4);
 
-  // 过滤：以得分为准；文本命中仅作补充且要求长度≥2 的意图词
-  const qWords = [...qToks].filter(t => t.length >= 2);
+  // 过滤：纯打分 + 相对阈值。绝对线 min_score 之外，再砍掉低于第一名 30% 的长尾——
+  // 不相关的内容一律不展示（此前 "train" 会因子串误中 training/constraint 拖出无关分区）
   const cScore = c => scoreMap.get(c.dataset.name) || 0;
+  const topScore = Math.max(...all.map(x => x.score), 0);
+  const cutoff = Math.max(W.min_score, 0.3 * topScore);
   cards.forEach(c => {
-    const hit = cScore(c) > W.min_score || qWords.some(t => c.dataset.text.includes(t) && t.length >= 2);
-    c.style.display = hit ? '' : 'none';
+    c.style.display = cScore(c) >= cutoff ? '' : 'none';
   });
   let any = false;
   const secBest = new Map();
@@ -343,9 +427,10 @@ intentEl.addEventListener('input', () => {
   document.getElementById('empty').style.display = any ? 'none' : 'block';
   [...sections].sort((a, b) => secBest.get(b) - secBest.get(a)).forEach(s => sectionsBox.appendChild(s));
 
+  const T = STR[LANG];
   if (!scored.length) {
     recoEl.className = 'show';
-    recoEl.innerHTML = '<div class="reco-card"><div class="reco-body">本机没有明显匹配的 skill——可以直接把需求交给 agent 正常处理。</div></div>';
+    recoEl.innerHTML = '<div class="reco-card"><div class="reco-body">' + T.none + '</div></div>';
     return;
   }
   const max = scored[0].score;
@@ -355,26 +440,47 @@ intentEl.addEventListener('input', () => {
     const descRuns = matchedRuns(q, x.s._dt.replace(/ /g, '')).filter(r => !nameRuns.includes(r));
     const kwRuns = matchedRuns(q, x.s._kt.replace(/ /g, '')).filter(r => !nameRuns.includes(r) && !descRuns.includes(r)).slice(0, 3);
     const synHits = qw.filter(([t, f]) => f < 1 && (x.s._name.has(t) || x.s._desc.has(t) || x.s._kw.has(t)))
-                      .slice(0, 4).map(([t]) => '<span class="kw">近义·' + t + '</span>').join('');
-    let kws = nameRuns.map(r => '<span class="kw">名称·' + r + '</span>').join('') +
-              descRuns.map(r => '<span class="kw">描述·' + r + '</span>').join('') +
-              kwRuns.map(r => '<span class="kw">正文·' + r + '</span>').join('') + synHits;
-    const cross = x.ns > 0.08 && x.ds > 0.08 ? '<span class="kw" style="color:var(--green);background:rgba(74,222,128,.1)">名称+描述交叉命中</span>' : '';
+                      .slice(0, 4).map(([t]) => '<span class="kw">' + T.syn + t + '</span>').join('');
+    let kws = nameRuns.map(r => '<span class="kw">' + T.name + r + '</span>').join('') +
+              descRuns.map(r => '<span class="kw">' + T.desc + r + '</span>').join('') +
+              kwRuns.map(r => '<span class="kw">' + T.body + r + '</span>').join('') + synHits;
+    const cross = x.ns > 0.08 && x.ds > 0.08 ? '<span class="kw" style="color:var(--green);background:rgba(74,222,128,.1)">' + T.cross + '</span>' : '';
+    const mtNote = sMt(x.s) ? '<div class="mt-note">⟡ ' + T.mt + '</div>' : '';
     return '<div class="reco-card' + (i === 0 ? ' best' : '') + '">' +
       '<div class="reco-rank">' + (i + 1) + '</div><div class="reco-body">' +
-      '<div>' + (i === 0 ? '<span class="ai-badge">AI 建议</span>' : '') +
+      '<div>' + (i === 0 ? '<span class="ai-badge">' + T.aiPick + '</span>' : '') +
       '<span class="reco-name">' + x.s.name + '</span>' +
       x.s.hosts.map(h => '<span class="badge host" style="background:' + h[1] + ';margin-right:4px">' + h[0] + '</span>').join('') +
       (x.s.warn ? ' <span class="badge warn">⚠ ' + x.s.warn + '</span>' : '') +
-      ' <button class="copybtn" data-copy="' + x.s.name + '" title="复制 skill 名">⧉ 复制</button></div>' +
-      '<div class="reco-desc">' + x.s.desc + '</div>' +
-      '<div class="reco-why">匹配依据：' + (kws || '<span class="kw">弱相关</span>') + cross +
-      '　场景：' + x.s.cat + '</div>' +
+      ' <button class="copybtn" data-copy="' + x.s.name + '">⧉</button></div>' +
+      '<div class="reco-desc">' + sDesc(x.s) + '</div>' + mtNote +
+      '<div class="reco-why">' + T.match + (kws || '<span class="kw">' + T.weak + '</span>') + cross +
+      T.scene + sCat(x.s) + '</div>' +
       '<div class="scorebar"><i style="width:' + Math.round(100 * x.score / max) + '%"></i></div>' +
-      (i === 0 ? '<div class="reco-note">仅为建议——最终请自行选择；会话内 skill-picker 会结合你的真实上下文重新给出候选。</div>' : '') +
+      (i === 0 ? '<div class="reco-note">' + T.note + '</div>' : '') +
       '</div></div>';
   }).join('');
 });
+
+// 语言切换：UI 文案 + 卡片描述 + 分类名 + 推荐面板全部跟随
+function applyLang() {
+  document.querySelectorAll('[data-zh]').forEach(el => { el.textContent = el.dataset[LANG] || el.dataset.zh; });
+  intentEl.placeholder = LANG === 'zh' ? intentEl.dataset.phZh : intentEl.dataset.phEn;
+  document.querySelectorAll('.langbtn').forEach(b => b.classList.toggle('active', b.dataset.lang === LANG));
+  cards.forEach(c => {
+    const s = byName.get(c.dataset.name);
+    if (!s) return;
+    const mt = sMt(s) ? (LANG === 'zh' ? '　⟡AI 译' : '　⟡AI-translated') : '';
+    c.querySelector('.desc').textContent = (sDesc(s) || '') + mt;
+  });
+  intentEl.dispatchEvent(new Event('input'));
+}
+document.querySelectorAll('.langbtn').forEach(b => b.addEventListener('click', () => {
+  LANG = b.dataset.lang; localStorage.setItem('sp-lang', LANG); applyLang();
+}));
+applyLang();
+
+applyHashQuery();   // input 监听器已就绪，此时消费 #q= 才能触发匹配
 </script>
 </body>
 </html>
@@ -495,6 +601,19 @@ def build_dashboard() -> Path:
             f'{html.escape(title[:60])}{tag}</div>'
             f'{"".join(member_rows)}<div class="pairs">{"".join(pair_rows)}</div></div>')
 
+    # 双语描述：原文缺哪种语言就用译文库补齐，缺译文回退原文并打 mt 标
+    translations = load_translations()
+
+    def bilingual(m):
+        orig = m["description"]
+        entry = translations.get(m["dir_name"].lower(), {})
+        if _is_zh(orig):
+            return orig, entry.get("en") or orig, False, bool(entry.get("en"))
+        return entry.get("zh") or orig, orig, bool(entry.get("zh")), False
+
+    for m in merged:
+        m["desc_zh"], m["desc_en"], m["mt_zh"], m["mt_en"] = bilingual(m)
+
     # 场景分区（合并后的条目；多端副本一张卡、宿主 label 逐一展示）
     by_cat: dict[str, list[dict]] = {}
     for m in merged:
@@ -505,27 +624,36 @@ def build_dashboard() -> Path:
         for m in sorted(by_cat[cat], key=lambda x: x["name"].lower()):
             w = warn_text(m)
             warn_badge = f'<span class="badge warn">! {html.escape(w)}</span>' if w else ""
-            text = html.escape(f"{m['name']} {m['description']} {m['keywords']} {cat}".lower(), quote=True)
+            text = html.escape(
+                f"{m['name']} {m['desc_zh']} {m['desc_en']} {m['keywords']} {cat}".lower(), quote=True)
             text = "".join(ch for ch in text if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
             paths = "<br>".join(
                 f'[{html.escape(HOST_LABELS.get(c["host"], (c["host"], ""))[0])}] {html.escape(c["path"])}'
                 for c in m["copies"])
             copy_btn = (f'<button class="copybtn" data-copy="{html.escape(m["name"], quote=True)}"'
-                        f' title="复制 skill 名">⧉ 复制</button>')
+                        f'>⧉</button>')
             cards.append(
                 f'<div class="card" data-text="{text}" data-name="{html.escape(m["name"], quote=True)}">'
                 f'<div class="top"><span class="name">{html.escape(m["name"])}</span>'
                 f'{host_badges(m)}{warn_badge}{copy_btn}</div>'
-                f'<div class="desc">{html.escape(m["description"]) or "（无描述）"}</div>'
+                f'<div class="desc">{html.escape(m["desc_zh"]) or "（无描述）"}</div>'
                 f'<div class="path">{paths}</div></div>')
-        sections.append(f"<section><h2>{html.escape(cat)}（{len(cards)}）</h2>"
-                        f'<div class="grid">{"".join(cards)}</div></section>')
+        cat_en = CAT_EN.get(cat, cat)
+        sections.append(
+            f'<section data-cat="{html.escape(cat, quote=True)}">'
+            f'<h2><span data-zh="{html.escape(cat, quote=True)}（{len(cards)}）" '
+            f'data-en="{html.escape(cat_en, quote=True)} ({len(cards)})"></span></h2>'
+            f'<div class="grid">{"".join(cards)}</div></section>')
 
-    # 给 JS 的数据（同样是合并后的条目；cats 为多标签）
+    # 给 JS 的数据（同样是合并后的条目；cats 为多标签；双语描述 + 机翻标记）
     js_data = []
     for m in merged:
         js_data.append({
-            "name": m["name"], "desc": m["description"][:220], "cat": m["category"],
+            "name": m["name"],
+            "desc": m["description"][:220],
+            "descZh": m["desc_zh"][:220], "descEn": m["desc_en"][:220],
+            "mtZh": m["mt_zh"], "mtEn": m["mt_en"],
+            "cat": m["category"], "catEn": CAT_EN.get(m["category"], m["category"]),
             "cats": m.get("categories", [m["category"]]),
             "kw": m["keywords"][:300],
             "hosts": [[HOST_LABELS.get(h, (h, "#888"))[0], HOST_LABELS.get(h, (h, "#888"))[1]]
@@ -553,8 +681,9 @@ def build_dashboard() -> Path:
         mark = {"pass": "✓", "warn": "⚠", "fail": "✗"}[g["status"]]
         gate_pills.append(
             f'<span style="font-size:12px;border-radius:999px;padding:2px 12px;'
-            f'background:{bg};color:{fg};border:1px solid {bd}" title="{html.escape(g["detail"])}">'
-            f'{mark} {g["id"]} {html.escape(g["name"])}</span>')
+            f'background:{bg};color:{fg};border:1px solid {bd}" title="{html.escape(g["detail"])}"'
+            f' data-zh="{mark} {g["id"]} {html.escape(g["name"], quote=True)}"'
+            f' data-en="{mark} {g["id"]} {html.escape(GATE_EN.get(g["id"], g["name"]), quote=True)}"></span>')
         if g["status"] != "pass":
             items = "".join(f'<li style="color:var(--dim);font-size:12px;margin-left:18px">'
                             f'<code>{html.escape(it)}</code></li>' for it in g["items"][:15])
