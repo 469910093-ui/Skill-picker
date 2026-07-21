@@ -30,7 +30,9 @@ CATALOG_JSON = DATA_DIR / "catalog.json"
 CATALOG_MD = DATA_DIR / "catalog.md"
 CONFIG_JSON = DATA_DIR / "config.json"
 SELF_NAME = "skill-picker"
-TOOL_FILES = ["skillpick.py", "matching.py", "dashboard.py", "rules.json", "translations.json"]
+TOOL_FILES = ["skillpick.py", "matching.py", "dashboard.py", "rules.json", "translations.json",
+              "mcp_server.py"]
+MCP_SERVER_NAME = "skill-picker"
 
 # 扫描根目录 -> 宿主标签。存在才扫，不存在跳过。
 SCAN_ROOTS = [
@@ -453,10 +455,25 @@ description: >-
 - 普通编码/问答任务，与「选哪个 skill」无关
 - 被作为 subagent 派发执行具体任务时
 
+## 三级降级链（检索与看板都按此顺序，确保体验）
+
+1. **① MCP 插件优先**：若工具列表里有 `skill-picker` MCP server 的
+   `skill_match` / `skill_dashboard` 工具，直接调用——无需拼 shell 命令，
+   无路径/PATH/编码问题。
+2. **② CLI + 本地看板**：MCP 不可用（未注册/调用报错）时，降级跑下方的
+   match CLI 与 serve 命令。
+3. **③ 系统浏览器兜底**：serve 也起不来时，直接让用户用浏览器打开
+   `<HOME>/.skill-picker/dashboard.html`（file:// 直开可用，搜索/复制功能完整）。
+
+每一级失败要**静默降级到下一级**，不要卡住等用户排障。
+
 ## 工作流程
 
-1. **必须先跑共享检索命令**（与 dashboard 同一引擎，禁止凭记忆翻 catalog）。
-   路径按平台写，**Windows 的 python 不认 `~`**：
+1. **先取候选（按降级链）**：
+
+   - ① 优先调用 MCP 工具 `skill_match`，参数 `{"query": "<用户意图原话>", "top": 4}`；
+   - ② MCP 不可用再跑共享检索命令（与 dashboard 同一引擎，禁止凭记忆翻 catalog）。
+     路径按平台写，**Windows 的 python 不认 `~`**：
 
    ```
    # Windows (PowerShell)
@@ -491,7 +508,11 @@ description: >-
   页面会自动预填输入框并呈现候选与 AI 建议；同时仍在对话里跑 match 给出可点选项
   （页面供浏览，最终选择在对话内确认）。
 
-1. **后台**启动本地预览（自动选端口，输出访问 URL；必须后台运行，serve 是常驻进程，
+获取看板 URL 同样按三级降级链：
+
+1. **① MCP 优先**：调用 `skill_dashboard` 工具（可传 `{"intent": "<用户意图>"}`），
+   它会确保 serve 在跑并返回带 `#q=` 预填的 URL。
+2. **② CLI 降级**：MCP 不可用时**后台**启动本地预览（必须后台运行，serve 是常驻进程，
    前台跑会阻塞后续步骤）：
 
    ```
@@ -501,23 +522,31 @@ description: >-
    python3 "$HOME/.skill-picker/skillpick.py" serve
    ```
 
-2. **Cursor 宿主**：用内置浏览器以 side（侧边）位置打开输出的 URL——
-   看板就出现在用户与 AI 的对话框旁边，可直接输意图筛选、看「理技能」tab 的重复体检。
-   **其他宿主**（Claude Code / Codex / OpenClaw 为终端应用，无侧边栏）：
-   用系统默认浏览器打开（Windows `Start-Process <url>` / macOS `open` / Linux `xdg-open`）。
+3. **③ 文件兜底**：serve 起不来（无 python / 端口全占）→ 直接打开本地文件
+   `<HOME>/.skill-picker/dashboard.html`（file:// 可用，仅少 `#q=` 预填）。
 
-3. 看板是只读体检：漂移/重叠仅提示。用户看完点名要清理时，
-   属于独立任务，逐项确认后再动手（见只读铁律）。
+拿到 URL 后的打开方式：
+
+- **Cursor 宿主**：用内置浏览器以 side（侧边）位置打开——看板出现在用户与 AI 的
+  对话框旁边，可直接输意图筛选、看「理技能」tab 的重复体检。
+- **其他宿主**（Claude Code / Codex / OpenClaw 为终端应用，无侧边栏）：
+  用系统默认浏览器打开（Windows `Start-Process <url>` / macOS `open` / Linux `xdg-open`）。
+
+看板是只读体检：漂移/重叠仅提示。用户看完点名要清理时，
+属于独立任务，逐项确认后再动手（见只读铁律）。
 
 ## Quick Reference
 
 以下 `<HOME>` 指用户主目录（Windows PowerShell 用 `$env:USERPROFILE`，
 macOS/Linux 用 `$HOME`；Windows 上 `python` 缺失时换 `py`，Unix 用 `python3`）：
 
-| 命令 | 用途 |
+| 入口 | 用途 |
 |---|---|
-| `python "<HOME>/.skill-picker/skillpick.py" match "意图" --top 4 --json` | 检索候选（第一步必跑） |
-| `python "<HOME>/.skill-picker/skillpick.py" serve` | 起本地看板（后台运行），Cursor 内侧边打开 |
+| MCP 工具 `skill_match` | ① 首选：检索候选（免 shell） |
+| MCP 工具 `skill_dashboard` | ① 首选：拿看板 URL（自动起 serve、带意图预填） |
+| `python "<HOME>/.skill-picker/skillpick.py" match "意图" --top 4 --json` | ② 降级：CLI 检索候选 |
+| `python "<HOME>/.skill-picker/skillpick.py" serve` | ② 降级：起本地看板（后台运行） |
+| `<HOME>/.skill-picker/dashboard.html` | ③ 兜底：file:// 直开看板 |
 | `python "<HOME>/.skill-picker/skillpick.py" scan` | 刷新 catalog（新装 skill 后 / 超 7 天） |
 | `python "<HOME>/.skill-picker/skillpick.py" check` | 四道门禁体检（退出码 2=不可信） |
 | `<HOME>/.skill-picker/catalog.md` | 人读/兜底用瘦身索引 |
@@ -540,6 +569,74 @@ macOS/Linux 用 `$HOME`；Windows 上 `python` 缺失时换 `py`，Unix 用 `pyt
 """
 
 
+def _mcp_entry() -> dict:
+    """MCP server 配置项：指向 ~/.skill-picker 自拷贝副本，跨机器稳定。"""
+    return {
+        "command": sys.executable,
+        "args": [str(DATA_DIR / "mcp_server.py")],
+    }
+
+
+def register_mcp_json(config_path: Path) -> str:
+    """幂等注册到 JSON 型 MCP 配置（Cursor / Claude Code）。
+
+    只增改 mcpServers.skill-picker 一个键；其余用户配置原样保留。
+    返回 'created' / 'updated' / 'unchanged'。
+    """
+    entry = _mcp_entry()
+    data = {}
+    if config_path.exists():
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return "skipped(配置文件解析失败，未改动)"
+    servers = data.setdefault("mcpServers", {})
+    if servers.get(MCP_SERVER_NAME) == entry:
+        return "unchanged"
+    status = "updated" if MCP_SERVER_NAME in servers else \
+             ("created" if config_path.exists() else "created(new file)")
+    servers[MCP_SERVER_NAME] = entry
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                           encoding="utf-8")
+    return status
+
+
+def register_mcp_toml(config_path: Path) -> str:
+    """幂等注册到 Codex 的 config.toml：已有 [mcp_servers.skill-picker] 则跳过。
+
+    零依赖场景下不做完整 TOML 解析，只做「存在即不动、不存在则追加」——
+    追加块自包含，不影响用户已有配置。
+    """
+    header = f'[mcp_servers."{MCP_SERVER_NAME}"]'
+    header_bare = f"[mcp_servers.{MCP_SERVER_NAME}]"
+    text = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    if header in text or header_bare in text:
+        return "unchanged"
+    entry = _mcp_entry()
+    args_toml = ", ".join(json.dumps(a) for a in entry["args"])
+    block = (f"\n{header}\n"
+             f"command = {json.dumps(entry['command'])}\n"
+             f"args = [{args_toml}]\n")
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(text + block, encoding="utf-8")
+    return "created" if text else "created(new file)"
+
+
+def register_mcp_all() -> None:
+    """把 MCP server 注册进各宿主配置（存在才注册对应宿主目录）。"""
+    targets = [
+        ("cursor", HOME / ".cursor" / "mcp.json", register_mcp_json),
+        ("claude-code", HOME / ".claude" / "mcp.json", register_mcp_json),
+        ("codex", HOME / ".codex" / "config.toml", register_mcp_toml),
+    ]
+    for host, path, fn in targets:
+        if not path.parent.is_dir():
+            print(f"[mcp] {host}: 宿主目录不存在，跳过")
+            continue
+        print(f"[mcp] {host}: {fn(path)} -> {path}")
+
+
 def install_meta_skill() -> None:
     # 工具自拷贝到 ~/.skill-picker/，meta-skill 全部用 ~ 路径，跨机器可用
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -552,6 +649,7 @@ def install_meta_skill() -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(META_SKILL_TEMPLATE, encoding="utf-8")
         print(f"[install] {host}: {target}")
+    register_mcp_all()
     print(f"[install] 工具已自拷贝到 {DATA_DIR}（meta-skill 以 ~/.skill-picker 为准）")
 
 

@@ -46,13 +46,28 @@ skill-picker 就会被唤醒并弹出候选让你选择。
 rules.json ──── 近义词/权重/分类规则/停用词/黄金用例（唯一可调参处）
     │
     ├── matching.py ── 共享打分引擎（tokenize/IDF/多标签分类/合并副本/match）
-    │       ├── skillpick.py match  ← meta-skill 会话内路由（强制走此命令）
+    │       ├── mcp_server.py       ← 宿主插件形态（MCP stdio，降级链第①级）
+    │       ├── skillpick.py match  ← CLI 路由（降级链第②级）
     │       ├── run_gates G4        ← 黄金用例门禁
     │       └── tests/              ← 机器无关 fixture 回归
     └── dashboard.py ── JS 为同构镜像，常量由 rules.json 注入（禁止手写）
 ```
 
 **页面搜索和会话路由永远同一套结果**——这是 v2 重构的核心承诺。
+
+## 三级降级链（宿主插件优先，确保体验）
+
+`install` 会把本地 MCP server 注册进 Cursor（`~/.cursor/mcp.json`）、
+Claude Code（`~/.claude/mcp.json`）、Codex（`~/.codex/config.toml`）——
+写入前读原文件、只增改 `skill-picker` 一个键、幂等可重跑，不碰用户已有配置。
+
+| 级别 | 入口 | 说明 |
+|---|---|---|
+| ① 插件 | MCP 工具 `skill_match` / `skill_dashboard` | agent 直接调用，免 shell、免路径/PATH/编码问题 |
+| ② CLI + HTML | `skillpick.py match` / `serve` + 内置浏览器 | MCP 未注册或调用失败时降级 |
+| ③ 浏览器兜底 | 系统默认浏览器打开 `dashboard.html`（file:// 可用） | serve 也起不来时的最终兜底 |
+
+OpenClaw 暂无标准 MCP 注册入口，从第②级起步。
 
 ## 工作原理
 
