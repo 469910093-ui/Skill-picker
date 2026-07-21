@@ -250,29 +250,19 @@ cards.forEach(c => c.addEventListener('click', () => c.classList.toggle('open'))
 intentEl.addEventListener('input', () => {
   const raw = intentEl.value.trim();
   const q = (norm(stripStop(raw)) || norm(raw)).replace(/ /g, '');
-  // 1) 过滤卡片：要求命中至少一个有区分度的意图词（长度>=2 或英文词）
-  const qWords = [...tokenize(q)].filter(t => t.length >= 2);
-  cards.forEach(c => {
-    const hit = !q || c.dataset.text.includes(q) || qWords.some(t => c.dataset.text.includes(t));
-    c.style.display = hit ? '' : 'none';
-  });
-  let any = false;
-  const visCount = new Map();
-  sections.forEach(s => {
-    const n = [...s.querySelectorAll('.card')].filter(c => c.style.display !== 'none').length;
-    visCount.set(s, n);
-    s.style.display = n ? '' : 'none'; any = any || n > 0;
-  });
-  document.getElementById('empty').style.display = any ? 'none' : 'block';
-  // 有意图时：命中最多的场景排最前；清空时恢复默认顺序
-  (q ? [...sections].sort((a, b) => visCount.get(b) - visCount.get(a)) : originalOrder)
-    .forEach(s => sectionsBox.appendChild(s));
 
-  // 2) AI 建议面板
-  if (q.length < 2) { recoEl.className = ''; recoEl.innerHTML = ''; return; }
+  // 无意图（或太短）：全部显示，恢复默认顺序
+  if (q.length < 2) {
+    recoEl.className = ''; recoEl.innerHTML = '';
+    cards.forEach(c => { c.style.display = ''; });
+    sections.forEach(s => { s.style.display = ''; });
+    originalOrder.forEach(s => sectionsBox.appendChild(s));
+    document.getElementById('empty').style.display = 'none';
+    return;
+  }
   const qToks = tokenize(q);
   const qw = expandIntent(qToks);
-  const scored = SKILLS.map(s => {
+  const all = SKILLS.map(s => {
     const ns = fieldScore(qw, s._name);              // 名称命中
     const ds = fieldScore(qw, s._desc);              // 描述命中
     const ks = fieldScore(qw, s._kw);                // MD 正文关键词命中
@@ -284,7 +274,30 @@ intentEl.addEventListener('input', () => {
     let catHit = 0; qToks.forEach(t => { if (t.length >= 2 && s._cat.includes(t)) catHit++; });
     score += 0.04 * Math.min(catHit, 2);             // 场景弱加权
     return { s, score, ns, ds };
-  }).filter(x => x.score > 0.12).sort((a, b) => b.score - a.score).slice(0, 4);
+  });
+  const scoreMap = new Map(all.map(x => [x.s.name, x.score]));
+  const scored = all.filter(x => x.score > 0.12).sort((a, b) => b.score - a.score).slice(0, 4);
+
+  // 过滤卡片（文本命中或得分达标），区内按相关度排序
+  const qWords = [...qToks].filter(t => t.length >= 2);
+  const cScore = c => scoreMap.get(c.dataset.name) || 0;
+  cards.forEach(c => {
+    const hit = c.dataset.text.includes(q) || qWords.some(t => c.dataset.text.includes(t)) || cScore(c) > 0.12;
+    c.style.display = hit ? '' : 'none';
+  });
+  let any = false;
+  const secBest = new Map();
+  sections.forEach(s => {
+    const vis = [...s.querySelectorAll('.card')].filter(c => c.style.display !== 'none');
+    secBest.set(s, vis.length ? Math.max(...vis.map(cScore)) : -1);
+    s.style.display = vis.length ? '' : 'none'; any = any || vis.length > 0;
+    // 区内卡片按相关度重排
+    const grid = s.querySelector('.grid');
+    vis.sort((a, b) => cScore(b) - cScore(a)).forEach(c => grid.appendChild(c));
+  });
+  document.getElementById('empty').style.display = any ? 'none' : 'block';
+  // 场景按「区内最高相关度」排序，而非命中数量——大类不再靠数量霸榜
+  [...sections].sort((a, b) => secBest.get(b) - secBest.get(a)).forEach(s => sectionsBox.appendChild(s));
 
   if (!scored.length) {
     recoEl.className = 'show';
@@ -470,7 +483,7 @@ def build_dashboard() -> Path:
                 f'[{html.escape(HOST_LABELS.get(c["host"], (c["host"], ""))[0])}] {html.escape(c["path"])}'
                 for c in m["copies"])
             cards.append(
-                f'<div class="card" data-text="{text}">'
+                f'<div class="card" data-text="{text}" data-name="{html.escape(m["name"], quote=True)}">'
                 f'<div class="top"><span class="name">{html.escape(m["name"])}</span>'
                 f'{host_badges(m)}{warn_badge}</div>'
                 f'<div class="desc">{html.escape(m["description"]) or "（无描述）"}</div>'
