@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] - 2026-07-27
+
+### Fixed
+- 会话唤起看板时自动填入意图：URL `?q=` + `pending_intent` 落盘 + serve 无参时 302 预填
+- 用户不再需要在看板里把对话意图重新手输一遍
+
 ## [0.2.0] - 2026-07-27
 
 ### Added
@@ -12,6 +18,8 @@
 
 ### Changed
 - 仓库描述与 homepage 指向 Live Demo，方便转发
+- 看板意图预填改用 `?q=`（不再依赖 `#q=`）：Cursor 打开时自动展示匹配结果
+- 看板意图预填改用 `?q=`（不再依赖 `#q=`）：Cursor 打开时自动展示匹配结果，无需用户重输
 
 ## [0.1.0] - 2026-07
 

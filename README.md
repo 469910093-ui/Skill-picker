@@ -91,6 +91,11 @@ rules.json ──── 近义词 / 权重 / 分类 / 黄金用例（唯一可�
 
 **永不修改、移动、删除任何已有 skill 文件**，只写 `~/.skill-picker/`。
 
+## 相关：从 GitHub 发现新 skill
+
+skill-picker **只索引本机已装 skills**（100% 本地，不联网）。  
+若要从 GitHub / HelloGitHub 发现远程 skill，请用拆出来的兄弟产品 **skill-feed**（无限下滑 Feed + 门禁 + 打开 GitHub；**不代装**。你自行安装后再跑本工具的 `scan`）。
+
 ## 文档
 
 - [在线 Demo](https://469910093-ui.github.io/Skill-picker/demo/)

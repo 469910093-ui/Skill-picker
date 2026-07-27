@@ -48,6 +48,7 @@ SCAN_ROOTS = [
     (HOME / ".openclaw" / "skills", "openclaw"),
     (HOME / ".openclaw" / "workspace" / "skills", "openclaw"),
     (HOME / ".gemini" / "skills", "gemini"),
+    (HOME / ".config" / "opencode" / "skills", "opencode"),
 ]
 
 # 覆盖率门禁的全盘发现范围：这些基目录下任何 SKILL.md 都必须被扫描根覆盖
@@ -434,12 +435,13 @@ def write_catalog_md(catalog: dict) -> None:
 META_SKILL_TEMPLATE = """---
 name: skill-picker
 description: >-
-  Use when 用户想不起某个 skill 的名字、不确定该用哪个 skill、
-  询问"有没有 / 用哪个 skill 能做 X"、说"查找一下本机最适合的 skills"、
-  "使用本机 skills 帮我做 X"、"用本机的 skill 来做"、想知道本机装了哪些 skills、
-  在多个相似 skills 之间犹豫不决，或要求打开 skills 看板、
-  浏览/筛选/清理本机 skills 时使用。
-  用户已明确点名某个具体 skill、或任务本身与 skill 选择无关时不要使用。
+  必用触发语（命中任一句即启用）：帮我选个 skill、用哪个 skill、有没有 skill、
+  查找本机最适合的 skills、使用本机 skills 帮我做、用本机的 skill 来做、
+  本机装了哪些 skills、打开 skills 看板、理技能、skill 总览、看看重复 skill。
+  Also use when 用户想不起 skill 名字、在多个相似 skills 间犹豫、要浏览/筛选/清理本机 skills。
+  HARD GATE: 必须先打开看板（MCP skill_dashboard / skill_match 的 dashboard_url /
+  serve / file://）再列候选；只在对话里列文字 = 失败。
+  用户已点名具体 skill、或任务与选 skill 无关时不要使用。
 ---
 
 # skill-picker：本机 skills 路由器
@@ -448,6 +450,9 @@ description: >-
 
 读取本机 skills catalog（由扫描器生成、带四道门禁），用共享打分引擎给出 2-4 个候选，
 标注 AI 推荐但**由用户点选**，选定后才执行对应 SKILL.md。只读，不改任何 skill。
+
+**硬门禁（不可跳过）**：凡触发本 skill，必须先把看板弹到用户眼前，再在对话里给候选。
+「只 match / 只在聊天里列清单、不打开看板」= 违规，必须立刻补开。
 
 ## When NOT to use
 
@@ -467,73 +472,60 @@ description: >-
 
 每一级失败要**静默降级到下一级**，不要卡住等用户排障。
 
-## 工作流程
+## 工作流程（顺序强制）
 
-1. **先取候选（按降级链）**：
+### 0. 先开看板（HARD GATE — 禁止跳过）
 
-   - ① 优先调用 MCP 工具 `skill_match`，参数 `{"query": "<用户意图原话>", "top": 4}`；
-   - ② MCP 不可用再跑共享检索命令（与 dashboard 同一引擎，禁止凭记忆翻 catalog）。
-     路径按平台写，**Windows 的 python 不认 `~`**：
+在调用 match、在对话里写任何候选列表之前，必须完成：
 
-   ```
-   # Windows (PowerShell)
-   python "$env:USERPROFILE\.skill-picker\skillpick.py" match "<用户意图原话>" --top 4 --json
-   # macOS / Linux
-   python3 "$HOME/.skill-picker/skillpick.py" match "<用户意图原话>" --top 4 --json
-   ```
+1. **① MCP**：调用 `skill_dashboard`，参数 `{"intent": "<用户意图原话>"}`  
+   （或调用 `skill_match`——其返回里带 `dashboard_url` / `dashboard_required: true`，
+   同样视为已拿到看板地址，但**仍必须实际打开**该 URL）。
+2. **立刻打开完整 URL**（拿到地址不等于打开；**禁止剥掉 `?q=`**）：
+   - **Cursor**：用 `open_resource`（或内置浏览器）打开 `dashboard_url`（侧边）。
+   - **终端宿主**：`Start-Process` / `open` / `xdg-open` 打开同一 URL。
+   - 打开后看板须已自动填入意图并展示候选；若仍是空白搜索框 = 打开了错误 URL。
+3. **② CLI 降级**：MCP 不可用时后台 `serve`，再打开返回的带 `?q=` 的 URL。
+4. **③ 文件兜底**：优先 `fallback_url`（file:// 且已带 `?q=`）；否则 `dashboard_fallback_file`。
 
-   `python` 不存在时依次换 `py`（Windows）或 `python3`。命令报错 → 先跑同路径 `scan` 再重试。
+未完成步骤 0 → **禁止**进入步骤 1 的「向用户展示候选」。若已误列候选，先补开看板再继续。
 
-2. **门禁检查**：输出的 gates 中若 G1 覆盖率 FAIL，说明本机存在未被索引的 skills，
-   匹配结果不完整——必须提醒用户，并给出把未覆盖目录加入
-   `~/.skill-picker/config.json` 的 `extra_roots` 的具体写法，然后重新 scan。
+适用话术（全部强制开看板；用户说下面任一句都必须走本流程）：
 
-3. **给出 AI 建议，但必须让用户选择**：结合会话上下文（用户原话、工作区、最近文件）
-   把推荐项放第一个选项并标「推荐」+ 一句话理由；其余按分数排列。
-   用宿主提问工具（Cursor: AskQuestion；Claude Code: AskUserQuestion；
-   其他宿主列编号选项等用户回答）。候选之间若有「同名漂移」或「功能重叠」必须点明。
+- 查找/选用：「帮我选个 skill」「用哪个 skill 做 X」「有没有 skill 能…」
+  「查找本机最适合的 skills」「使用本机 skills 帮我做 X」「本机装了哪些 skills」
+- 浏览/清理：「打开 skills 看板」「理技能」「看看重复」「清理」「skill 总览」
 
-4. 用户选定后，读取该 skill 的 SKILL.md（路径在 match 输出里），严格照做。
+看板 URL 带意图：`.../dashboard.html?q=<URL编码的意图>`（用查询参数，不用 #q=，
+避免 Cursor 打开时丢掉 fragment；页面加载后自动填入并展示匹配结果）。
 
-5. 无匹配（match 返回空）→ 直说「本机没有对应 skill」，不要硬凑。
+### 1. 取候选（与看板同一引擎）
 
-## 打开看板（对话侧边栏的筛选 / 清理界面）
+- ① MCP `skill_match`，`{"query": "<用户意图原话>", "top": 4}`  
+  （响应含 `dashboard_url`；若步骤 0 未开，用该 URL 立刻打开）
+- ② CLI（Windows 的 python 不认 `~`）：
 
-以下两类话术都**必须弹出看板页面**让用户自己看着选，而不是只在对话里列文字候选：
+  ```
+  # Windows (PowerShell)
+  python "$env:USERPROFILE\\.skill-picker\\skillpick.py" match "<用户意图原话>" --top 4 --json
+  # macOS / Linux
+  python3 "$HOME/.skill-picker/skillpick.py" match "<用户意图原话>" --top 4 --json
+  ```
 
-- 浏览/清理类：「打开 skills 看板 / 理技能 / 看看重复的 skills / 清理 skills / skill 总览」
-- **带意图的查找类**：「查找一下本机最适合的 skills」「使用本机 skills 帮我做 ppt」
-  「用本机的 skill 来做 X」——凡是用户明确提到"本机 skills"并带任务意图的，
-  打开看板时把意图挂到 URL 上：`http://127.0.0.1:<端口>/dashboard.html#q=<URL编码的意图>`，
-  页面会自动预填输入框并呈现候选与 AI 建议；同时仍在对话里跑 match 给出可点选项
-  （页面供浏览，最终选择在对话内确认）。
+  JSON 同样含 `dashboard_required` / `dashboard_url`；命令报错 → 先 `scan` 再重试。
 
-获取看板 URL 同样按三级降级链：
+### 2. 门禁检查
 
-1. **① MCP 优先**：调用 `skill_dashboard` 工具（可传 `{"intent": "<用户意图>"}`），
-   它会确保 serve 在跑并返回带 `#q=` 预填的 URL。
-2. **② CLI 降级**：MCP 不可用时**后台**启动本地预览（必须后台运行，serve 是常驻进程，
-   前台跑会阻塞后续步骤）：
+gates 中 G1 FAIL → 必须提醒用户补 `extra_roots` 并重扫，不得假装结果完整。
 
-   ```
-   # Windows (PowerShell)
-   python "$env:USERPROFILE\.skill-picker\skillpick.py" serve
-   # macOS / Linux
-   python3 "$HOME/.skill-picker/skillpick.py" serve
-   ```
+### 3. 对话内给选项（看板已开之后）
 
-3. **③ 文件兜底**：serve 起不来（无 python / 端口全占）→ 直接打开本地文件
-   `<HOME>/.skill-picker/dashboard.html`（file:// 可用，仅少 `#q=` 预填）。
+结合会话上下文把推荐项放第一并标「推荐」+ 一句话理由；用宿主提问工具让用户点选。
+有同名漂移或功能重叠必须点明。页面供浏览，最终选择在对话内确认。
 
-拿到 URL 后的打开方式：
+### 4–5. 选定后执行 / 无匹配
 
-- **Cursor 宿主**：用内置浏览器以 side（侧边）位置打开——看板出现在用户与 AI 的
-  对话框旁边，可直接输意图筛选、看「理技能」tab 的重复体检。
-- **其他宿主**（Claude Code / Codex / OpenClaw 为终端应用，无侧边栏）：
-  用系统默认浏览器打开（Windows `Start-Process <url>` / macOS `open` / Linux `xdg-open`）。
-
-看板是只读体检：漂移/重叠仅提示。用户看完点名要清理时，
-属于独立任务，逐项确认后再动手（见只读铁律）。
+用户选定后读对应 SKILL.md 严格照做。无匹配 → 直说没有，不硬凑。
 
 ## Quick Reference
 
@@ -542,9 +534,9 @@ macOS/Linux 用 `$HOME`；Windows 上 `python` 缺失时换 `py`，Unix 用 `pyt
 
 | 入口 | 用途 |
 |---|---|
-| MCP 工具 `skill_match` | ① 首选：检索候选（免 shell） |
-| MCP 工具 `skill_dashboard` | ① 首选：拿看板 URL（自动起 serve、带意图预填） |
-| `python "<HOME>/.skill-picker/skillpick.py" match "意图" --top 4 --json` | ② 降级：CLI 检索候选 |
+| MCP 工具 `skill_dashboard` | ① 硬门禁：拿看板 URL 并**必须打开** |
+| MCP 工具 `skill_match` | ① 检索候选（响应强制带 dashboard_url） |
+| `python "<HOME>/.skill-picker/skillpick.py" match "意图" --top 4 --json` | ② 降级检索（JSON 同样带 dashboard_url） |
 | `python "<HOME>/.skill-picker/skillpick.py" serve` | ② 降级：起本地看板（后台运行） |
 | `<HOME>/.skill-picker/dashboard.html` | ③ 兜底：file:// 直开看板 |
 | `python "<HOME>/.skill-picker/skillpick.py" scan` | 刷新 catalog（新装 skill 后 / 超 7 天） |
@@ -561,8 +553,10 @@ macOS/Linux 用 `$HOME`；Windows 上 `python` 缺失时换 `py`，Unix 用 `pyt
 
 | 念头 | 纠正 |
 |---|---|
+| 「先在对话里列候选，看板以后再说」 | **违规**。必须先打开看板再列候选 |
+| 「跑了 skill_match 就够了」 | match 返回的 `dashboard_url` 必须实际打开 |
 | 「意图很明显，直接替用户选吧」 | 必须弹选项让用户点选，推荐≠代选 |
-| 「catalog 我大概记得，不用跑命令」 | 必须跑 match CLI，凭记忆排序=页面与会话两套结果 |
+| 「catalog 我大概记得，不用跑命令」 | 必须跑 match，凭记忆排序=页面与会话两套结果 |
 | 「发现两份重复，顺手合并掉」 | 只读铁律：只提醒，不动手 |
 | 「没找到匹配，挑个最接近的凑数」 | 直说没有，让用户正常描述需求 |
 | 「G1 FAIL 但先不管，继续推荐」 | 覆盖不全=结果不可信，必须先提醒处理 |
@@ -637,6 +631,57 @@ def register_mcp_all() -> None:
         print(f"[mcp] {host}: {fn(path)} -> {path}")
 
 
+CURSOR_RULE_TEMPLATE = """---
+description: 用户说「选/找 skill、本机 skills、理技能」时必须走 skill-picker
+alwaysApply: true
+---
+
+# skill-picker 强制唤起
+
+当用户消息命中任一类意图时，**必须立刻执行 skill-picker 流程**，不要凭记忆猜 skill：
+
+- 选/找：「帮我选个 skill」「用哪个 skill」「有没有 skill」「查找本机最适合的 skills」
+  「使用本机 skills 帮我做…」「用本机的 skill 来做」「本机装了哪些 skills」
+- 理/看：「打开 skills 看板」「理技能」「看看重复」「skill 总览」「清理 skills」
+
+## 必做步骤（顺序强制）
+
+1. 调用 MCP `skill_dashboard`（intent=用户原话/会话上下文意图），或 `skill_match`（query=同上, top=4）
+2. 用 `open_resource`（或系统浏览器）**实际打开**返回的完整 `dashboard_url`（含 `?q=`；
+   禁止剥掉查询参数；没有 URL 则开 `fallback_url` / `dashboard_fallback_file`）
+3. 看板应已自动填入意图并展示匹配结果；再在对话里给出 2–4 个候选 +「推荐」，让用户点选
+4. 用户选定后，再读对应 SKILL.md 执行
+
+## 禁止
+
+- 只在聊天里列候选、不打开看板
+- 打开不带 `?q=` 的空白看板，让用户重新输入意图
+- 凭记忆排序 / 直接替用户选定 skill
+- G1 FAIL 时假装结果完整（须提醒补 `extra_roots`）
+
+用户已点名具体 skill 名（如「用 work-report」）时不要抢路由。
+"""
+
+
+def install_cursor_rule() -> str:
+    """写入 Cursor alwaysApply 规则，确保会话内话术能稳定唤起（不依赖 skills 列表是否截断）。"""
+    rules_dir = HOME / ".cursor" / "rules"
+    if not (HOME / ".cursor").is_dir():
+        return "skipped(无 .cursor 目录)"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    target = rules_dir / "skill-picker.mdc"
+    old = target.read_text(encoding="utf-8") if target.exists() else ""
+    # 兼容旧文件名：合并后删除仅看板门禁的旧规则，避免双份互相稀释
+    legacy = rules_dir / "skill-picker-dashboard-mandatory.mdc"
+    target.write_text(CURSOR_RULE_TEMPLATE, encoding="utf-8")
+    if legacy.exists() and legacy.resolve() != target.resolve():
+        try:
+            legacy.unlink()
+        except OSError:
+            pass
+    return "unchanged" if old == CURSOR_RULE_TEMPLATE else ("updated" if old else "created")
+
+
 def install_meta_skill() -> None:
     # 工具自拷贝到 ~/.skill-picker/，meta-skill 全部用 ~ 路径，跨机器可用
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -650,6 +695,7 @@ def install_meta_skill() -> None:
         target.write_text(META_SKILL_TEMPLATE, encoding="utf-8")
         print(f"[install] {host}: {target}")
     register_mcp_all()
+    print(f"[cursor-rule] {install_cursor_rule()}")
     print(f"[install] 工具已自拷贝到 {DATA_DIR}（meta-skill 以 ~/.skill-picker 为准）")
 
 
@@ -710,13 +756,38 @@ def cmd_match(argv: list[str]) -> None:
     results = matching.match(index, query, top=top)
     gates_brief = [{"id": g["id"], "status": g["status"], "detail": g["detail"]}
                    for g in catalog.get("gates", [])]
+    # 与 MCP skill_match 对齐：CLI 也强制附带看板 URL，避免 agent 只列文字
+    try:
+        from mcp_server import McpServer  # 延迟导入，避免模块级循环
+        dash = McpServer().tool_skill_dashboard({"intent": query})
+    except Exception as e:  # noqa: BLE001
+        dash = {
+            "url": "",
+            "fallback_file": str(DATA_DIR / "dashboard.html"),
+            "note": f"dashboard ensure failed: {e}",
+        }
+    dash_payload = {
+        "dashboard_required": True,
+        "dashboard_url": dash.get("url") or "",
+        "dashboard_fallback_file": dash.get("fallback_file") or str(DATA_DIR / "dashboard.html"),
+        "agent_must": (
+            "HARD GATE: 在向用户列出任何候选之前，必须实际打开 dashboard_url "
+            "（或 dashboard_fallback_file）。只返回文字候选而不打开看板 = 流程失败。"
+        ),
+    }
     if as_json:
-        print(json.dumps({"query": query, "gates": gates_brief, "results": results},
-                         ensure_ascii=False, indent=2))
+        print(json.dumps({
+            "query": query,
+            "gates": gates_brief,
+            "results": results,
+            **dash_payload,
+        }, ensure_ascii=False, indent=2))
         return
     for g in gates_brief:
         if g["status"] != "pass":
             print(f"[gate {g['id']}] {g['status'].upper()}  {g['detail']}")
+    print(f"[dashboard] REQUIRED → "
+          f"{dash_payload['dashboard_url'] or dash_payload['dashboard_fallback_file']}")
     if not results:
         print(f"[match] 「{query}」没有匹配的 skill")
         return
@@ -738,23 +809,66 @@ def cmd_report() -> None:
 
 
 def cmd_serve(argv: list[str]) -> None:
-    """本地预览看板：127.0.0.1 固定段端口，占用则顺延；单实例绑定（不复用端口）。"""
-    import functools
+    """本地预览看板：127.0.0.1 固定段端口，占用则顺延；单实例绑定（不复用端口）。
+
+    额外能力：
+    - GET /api/pending_intent → 返回会话意图（MCP match/dashboard 写入）
+    - 打开 /dashboard.html 且无 ?q= 时，若有 pending 意图则 302 到 ?q=…（用户不用重输）
+    """
     import http.server
     import socketserver
+    import urllib.parse
+
+    from mcp_server import load_pending_intent  # 延迟导入，与 CLI 共用落盘约定
 
     base_port = 8471
     if "--port" in argv:
         base_port = int(argv[argv.index("--port") + 1])
     if not (DATA_DIR / "dashboard.html").exists():
         cmd_scan()
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler,
-                                directory=str(DATA_DIR))
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(DATA_DIR), **kwargs)
+
+        def log_message(self, fmt, *args):  # noqa: A003 —— 降噪
+            if "/api/" in (args[0] if args else ""):
+                super().log_message(fmt, *args)
+
+        def do_GET(self):  # noqa: N802
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path or "/"
+            if path == "/api/pending_intent":
+                intent = load_pending_intent()
+                body = json.dumps({"intent": intent}, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if path in ("/", "/dashboard.html"):
+                qs = urllib.parse.parse_qs(parsed.query)
+                if not (qs.get("q") and qs["q"][0].strip()):
+                    intent = load_pending_intent()
+                    if intent:
+                        q = urllib.parse.urlencode({
+                            "q": intent,
+                            "_": str(int(datetime.now(timezone.utc).timestamp() * 1000)),
+                        })
+                        self.send_response(302)
+                        self.send_header("Location", f"/dashboard.html?{q}")
+                        self.send_header("Cache-Control", "no-store")
+                        self.end_headers()
+                        return
+            return super().do_GET()
+
     httpd = None
     for port in range(base_port, base_port + 10):
         try:
             # 默认 allow_reuse_address=False：端口被占时直接失败顺延，杜绝双实例抢连接
-            httpd = socketserver.TCPServer(("127.0.0.1", port), handler)
+            httpd = socketserver.TCPServer(("127.0.0.1", port), Handler)
             break
         except OSError:
             continue

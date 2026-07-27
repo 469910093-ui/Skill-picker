@@ -64,6 +64,7 @@ HOST_LABELS = {
     "codex-plugin": ("Codex 插件", "#2dd4bf"),
     "openclaw": ("OpenClaw", "#b58a3d"),
     "gemini": ("Gemini", "#8ab4f8"),
+    "opencode": ("OpenCode", "#c084fc"),
     "custom": ("自定义", "#9ca3af"),
 }
 
@@ -195,8 +196,8 @@ PAGE = """<!DOCTYPE html>
            data-ph-zh="输入你的意图，比如：我要做一份周报 / 帮我画个图表 / 写飞书文档…"
            data-ph-en="Describe your intent, e.g. make a weekly report / draw a chart / edit a video…">
     <div class="intent-hint"
-         data-zh="输入后即时给出候选 skills、描述与 AI 建议；同时按关联度过滤下方卡片。会话内的建议由 skill-picker 结合真实上下文给出，这里为本地近似。"
-         data-en="Type to get instant candidates with descriptions and an AI pick; cards below are filtered by relevance. In-chat suggestions use real session context; this page is a local approximation."></div>
+         data-zh="会话唤起时会自动填入你的意图并展示候选，无需再手输；也可在此继续改。"
+         data-en="When opened from chat, your intent is prefilled automatically — no retyping. You can still edit it here."></div>
     <div id="reco"></div>
   </div>
   <div id="sections">__SECTIONS__</div>
@@ -350,16 +351,55 @@ document.addEventListener('click', e => {
   if (b) copyText(b.dataset.copy, b);
 });
 
-// 支持 #q=<意图> 预填：agent 弹出页面时直接带上用户意图，候选即刻呈现
+// 会话意图自动预填（用户无需再手输）
+// 优先级：?q= → #q= → /api/pending_intent（MCP 写入的会话上下文）
 // 注意：首次调用在脚本末尾（须等 input 监听器注册完成）
-function applyHashQuery() {
+function readPrefillIntentFromUrl() {
+  try {
+    const q = new URLSearchParams(location.search).get('q');
+    if (q && q.trim()) return q.trim();
+  } catch (_) {}
   const m = location.hash.match(/^#q=(.+)$/);
-  if (!m) return;
-  intentEl.value = decodeURIComponent(m[1]);
+  if (!m) return '';
+  try { return decodeURIComponent(m[1]).trim(); }
+  catch (_) { return m[1].trim(); }
+}
+function applyIntentToInput(intent, source) {
+  if (!intent) return;
+  const findBtn = document.querySelector('.tabbtn[data-tab="find"]');
+  if (findBtn && !findBtn.classList.contains('active')) findBtn.click();
+  intentEl.value = intent;
   intentEl.dispatchEvent(new Event('input'));
   intentEl.focus();
+  const hint = document.querySelector('.intent-hint');
+  if (hint && source) {
+    const mark = source === 'session'
+      ? (LANG === 'en' ? ' · prefilled from chat' : ' · 已从会话自动填入')
+      : (LANG === 'en' ? ' · prefilled from URL' : ' · 已从链接自动填入');
+    if (!hint.dataset.baseZh) {
+      hint.dataset.baseZh = hint.getAttribute('data-zh') || hint.textContent;
+      hint.dataset.baseEn = hint.getAttribute('data-en') || hint.textContent;
+    }
+    hint.textContent = (LANG === 'en' ? hint.dataset.baseEn : hint.dataset.baseZh) + mark;
+  }
 }
-window.addEventListener('hashchange', applyHashQuery);
+function applyPrefillQuery() {
+  const fromUrl = readPrefillIntentFromUrl();
+  if (fromUrl) { applyIntentToInput(fromUrl, 'url'); return; }
+  // file:// 无法打 API；http(s) 看板拉取 MCP 落盘的会话意图
+  if (location.protocol === 'http:' || location.protocol === 'https:') {
+    fetch('/api/pending_intent', { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        const intent = (data && data.intent || '').trim();
+        if (intent) applyIntentToInput(intent, 'session');
+      })
+      .catch(() => {});
+  }
+}
+window.addEventListener('hashchange', applyPrefillQuery);
+window.addEventListener('popstate', applyPrefillQuery);
+window.addEventListener('pageshow', applyPrefillQuery);
 
 intentEl.addEventListener('input', () => {
   const raw = intentEl.value.trim();
@@ -480,7 +520,7 @@ document.querySelectorAll('.langbtn').forEach(b => b.addEventListener('click', (
 }));
 applyLang();
 
-applyHashQuery();   // input 监听器已就绪，此时消费 #q= 才能触发匹配
+applyPrefillQuery();   // input 监听器已就绪，此时消费 ?q= / #q= 才能触发匹配
 </script>
 </body>
 </html>

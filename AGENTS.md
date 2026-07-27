@@ -49,12 +49,13 @@ python skillpick.py install
 
 ## Step 3 — 带用户试一圈
 
-> 装好了！两种用法：
+> 装好了！查本机 skills / 选 skill 时，agent **必须先弹出看板**，再在对话里给候选点选。
 >
-> 1. **会话内**：直接说「帮我选个 skill 做 X」「有没有 skill 能剪视频」，
->    我会给出候选和推荐，由你点选。
-> 2. **看板**：打开 `~/.skill-picker/dashboard.html`（双击即可，无需服务器），
->    上方输入意图实时出候选，「理技能」tab 看重复体检。
+> 1. **会话内**：说「帮我选个 skill 做 X」「有没有 skill 能剪视频」→
+>    先开 `dashboard`（带 `?q=` 意图，页面自动展示匹配结果），再给候选和推荐，由你点选。
+> 2. **看板**：也可双击 `~/.skill-picker/dashboard.html`；「理技能」tab 看重复体检。
+>
+> 若 agent 只在聊天里列清单、看板没出来，就是流程违规——让它补开看板。
 
 ## Key Facts
 

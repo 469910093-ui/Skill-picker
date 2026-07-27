@@ -6,7 +6,7 @@ agent 可直接调用工具而不必拼 shell 命令——三级降级链的第�
 
 暴露两个 tool（与 CLI / dashboard 共用 matching.py + rules.json 单一真相源）：
 - skill_match(query, top): 共享打分引擎检索候选 skills
-- skill_dashboard(intent?): 确保本地看板服务在跑，返回可打开的 URL（可带 #q= 意图预填）
+- skill_dashboard(intent?): 确保本地看板服务在跑，返回可打开的 URL（可带 ?q= 意图预填）
 
 协议：MCP stdio 传输（每行一条 JSON-RPC 2.0 消息，newline-delimited）。
 """
@@ -14,6 +14,7 @@ agent 可直接调用工具而不必拼 shell 命令——三级降级链的第�
 import json
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -26,18 +27,26 @@ import matching  # noqa: E402
 DATA_DIR = Path.home() / ".skill-picker"
 CATALOG_JSON = DATA_DIR / "catalog.json"
 DASHBOARD_HTML = DATA_DIR / "dashboard.html"
+PENDING_INTENT_JSON = DATA_DIR / "pending_intent.json"
 SERVE_PORTS = range(8471, 8481)
+PENDING_INTENT_TTL_SEC = 300  # 5 分钟内看板可自动消费会话意图
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_INFO = {"name": "skill-picker", "version": "1.0.0"}
+
+DASHBOARD_AGENT_MUST = (
+    "HARD GATE: 在向用户列出任何候选之前，必须用 open_resource / 系统浏览器实际打开 "
+    "dashboard_url（或 fallback_file）。只返回文字候选而不打开看板 = 流程失败。"
+)
 
 TOOLS = [
     {
         "name": "skill_match",
         "description": (
-            "在本机全部已安装的 agent skills 中检索最匹配用户意图的候选（共享打分引擎，"
-            "与 skill-picker 看板同一结果）。返回候选列表（含名称/分数/描述/宿主/路径/"
-            "匹配依据）与索引门禁状态。用于\"用哪个 skill 做 X\"类模糊意图的路由。"
+            "当用户说「帮我选个 skill / 用哪个 skill / 有没有 skill / 本机 skills / "
+            "查找本机最适合的 skills」时调用。"
+            "在本机全部 skills 中检索候选（与看板同一引擎）。返回候选 + 门禁 + dashboard_url。"
+            "HARD GATE: dashboard_required=true；必须先打开 dashboard_url 再列候选。"
         ),
         "inputSchema": {
             "type": "object",
@@ -51,19 +60,75 @@ TOOLS = [
     {
         "name": "skill_dashboard",
         "description": (
-            "确保本机 skills 看板服务在运行，返回可打开的 URL。可选传入用户意图，"
-            "URL 会带 #q= 预填让看板直接呈现候选。调用方拿到 URL 后：Cursor 用内置"
-            "浏览器侧边打开；终端宿主用系统默认浏览器打开。"
+            "硬门禁入口：确保本机 skills 看板服务在运行，返回可打开的 URL。"
+            "可选传入用户意图，URL 会带 ?q= 预填并自动展示匹配结果（勿让用户重输）。"
+            "调用方拿到 URL 后必须立刻打开："
+            "Cursor 用 open_resource / 内置浏览器侧边打开；终端宿主用系统默认浏览器。"
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "intent": {"type": "string",
-                           "description": "可选：用户意图，用于看板输入框预填"},
+                           "description": "可选：用户意图，写入 URL ?q= 让看板自动匹配"},
             },
         },
     },
 ]
+
+
+def dashboard_url_with_intent(base_url: str, intent: str = "", *, bust: bool = True) -> str:
+    """把意图写进看板 URL 的 ?q=（不用 #q=：Cursor/Electron 打开时常丢掉 fragment）。
+
+    bust=True 时附加 &_=<ms>，迫使已打开的看板标签页导航刷新，避免仍停在空白搜索。
+    """
+    intent = (intent or "").strip()
+    if not base_url:
+        return base_url
+    parsed = urllib.parse.urlparse(base_url)
+    qs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    qs = [(k, v) for k, v in qs if k not in ("q", "_")]
+    if intent:
+        qs.append(("q", intent))
+        if bust:
+            qs.append(("_", str(int(time.time() * 1000))))
+    new_query = urllib.parse.urlencode(qs, quote_via=urllib.parse.quote)
+    # 清掉旧 #q= fragment，避免与 ?q= 双源冲突
+    frag = "" if (intent or parsed.fragment.startswith("q=")) else parsed.fragment
+    return urllib.parse.urlunparse(parsed._replace(query=new_query, fragment=frag))
+
+
+def save_pending_intent(intent: str, source: str = "mcp") -> None:
+    """把会话意图落到本地，供看板/serve 在 URL 参数丢失时自动预填。"""
+    intent = (intent or "").strip()
+    if not intent:
+        return
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    PENDING_INTENT_JSON.write_text(
+        json.dumps({
+            "intent": intent,
+            "source": source,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def load_pending_intent(*, max_age_sec: int = PENDING_INTENT_TTL_SEC) -> str:
+    """读取未过期的会话意图；过期或不存在返回空串。"""
+    if not PENDING_INTENT_JSON.exists():
+        return ""
+    try:
+        data = json.loads(PENDING_INTENT_JSON.read_text(encoding="utf-8"))
+        intent = (data.get("intent") or "").strip()
+        ts = data.get("ts") or ""
+        if not intent or not ts:
+            return ""
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(ts)).total_seconds()
+        if age < 0 or age > max_age_sec:
+            return ""
+        return intent
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
+        return ""
 
 
 class McpServer:
@@ -106,8 +171,18 @@ class McpServer:
             return {"error": "query 不能为空"}
         top = int(args.get("top") or 4)
         results = matching.match(self.get_index(), query, top=top)
-        return {"query": query, "gates": self.gates_brief(), "results": results,
-                "note": "" if results else "本机没有匹配的 skill，不要硬凑"}
+        dash = self.tool_skill_dashboard({"intent": query})
+        return {
+            "query": query,
+            "gates": self.gates_brief(),
+            "results": results,
+            "dashboard_required": True,
+            "dashboard_url": dash.get("url") or "",
+            "dashboard_fallback_file": dash.get("fallback_file") or str(DASHBOARD_HTML),
+            "agent_must": DASHBOARD_AGENT_MUST,
+            "note": ("" if results else "本机没有匹配的 skill，不要硬凑。")
+                    + " 必须先打开 dashboard_url 再向用户展示候选。",
+        }
 
     @staticmethod
     def _probe_dashboard() -> str:
@@ -140,14 +215,32 @@ class McpServer:
                 if url:
                     break
         fallback = str(DASHBOARD_HTML)
-        if not url:
-            return {"url": "", "fallback_file": fallback,
-                    "note": "serve 启动失败，请直接用浏览器打开 fallback_file（file:// 也可用）"}
         intent = (args.get("intent") or "").strip()
+        # 会话意图落盘：即使 Cursor 打开时丢掉 ?q=，serve/看板仍能自动预填
         if intent:
-            url += "#q=" + urllib.parse.quote(intent)
-        return {"url": url, "fallback_file": fallback,
-                "note": "Cursor: 内置浏览器 side 打开；终端宿主: 系统默认浏览器打开"}
+            save_pending_intent(intent, source="skill_dashboard")
+        if not url:
+            fallback_uri = dashboard_url_with_intent(
+                DASHBOARD_HTML.resolve().as_uri(), intent, bust=False)
+            return {
+                "url": "",
+                "fallback_file": fallback,
+                "fallback_url": fallback_uri,
+                "dashboard_required": True,
+                "agent_must": DASHBOARD_AGENT_MUST,
+                "note": "serve 启动失败，请用浏览器打开 fallback_url（已带 ?q= 意图，file:// 可用）",
+            }
+        url = dashboard_url_with_intent(url, intent, bust=True)
+        return {
+            "url": url,
+            "fallback_file": fallback,
+            "fallback_url": dashboard_url_with_intent(
+                DASHBOARD_HTML.resolve().as_uri(), intent, bust=False),
+            "dashboard_required": True,
+            "agent_must": DASHBOARD_AGENT_MUST,
+            "note": "Cursor: open_resource 必须打开完整 url（含 ?q=），禁止手改成无参数空白页。"
+                    " 意图已写入 pending_intent，看板无 ?q= 时也会自动预填。",
+        }
 
     # ---------------- 协议 ----------------
 
