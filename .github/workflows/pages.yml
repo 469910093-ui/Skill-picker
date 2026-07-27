@@ -1,30 +1,12 @@
-name: Deploy Demo to GitHub Pages
+name: Rebuild Demo
 
+# Pages 由仓库 Settings → Pages（main 分支 /docs 目录）直接托管已提交的静态文件。
+# 本 workflow 仅在需要时重建 docs/demo，并把结果作为 artifact 供人工检查。
 on:
-  push:
-    branches: [main]
-    paths:
-      - "docs/**"
-      - "dashboard.py"
-      - "matching.py"
-      - "rules.json"
-      - "translations.json"
-      - "scripts/build_demo.py"
-      - "tests/fixtures.py"
-      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
 jobs:
-  build:
+  rebuild-demo:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,20 +15,7 @@ jobs:
           python-version: "3.12"
       - name: Build demo
         run: python scripts/build_demo.py
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
-          path: docs
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
+          name: demo-html
+          path: docs/demo
