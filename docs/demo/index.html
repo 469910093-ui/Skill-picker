@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Skill Picker — Live Demo</title>
+<style>
+  :root {
+    --bg: #0e1013; --panel: #16191e; --panel2: #1c2027; --line: #262b33;
+    --text: #e8eaed; --dim: #9aa3af; --faint: #6b7280;
+    --red: #f87171; --amber: #f0b429; --purple: #a78bfa; --green: #4ade80; --blue: #60a5fa;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text);
+         font: 14px/1.6 "Microsoft YaHei", "Segoe UI", system-ui, sans-serif; padding: 26px 32px 90px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px; }
+  h1 { font-size: 22px; font-weight: 700; }
+  .stats { color: var(--dim); font-size: 13px; }
+  .readonly { display: inline-flex; align-items: center; gap: 6px; margin: 10px 0 16px;
+              background: rgba(74,222,128,.08); border: 1px solid rgba(74,222,128,.35);
+              color: var(--green); font-size: 12.5px; border-radius: 999px; padding: 3px 14px; }
+
+  /* 顶部 tabs */
+  .tabs { display: flex; gap: 8px; margin-bottom: 22px; border-bottom: 1px solid var(--line); }
+  .tabbtn { background: none; border: none; color: var(--dim); font: inherit; font-size: 15px;
+            font-weight: 600; padding: 9px 18px 11px; cursor: pointer; border-bottom: 2px solid transparent; }
+  .tabbtn:hover { color: var(--text); }
+  .tabbtn.active { color: var(--text); border-bottom-color: var(--blue); }
+  .tabbtn .n { font-size: 11.5px; color: var(--faint); margin-left: 6px; }
+  .tabbtn.t2.active { border-bottom-color: var(--red); }
+  .tabpane { display: none; }
+  .tabpane.active { display: block; }
+
+  /* 意图输入 */
+  .intent-wrap { margin-bottom: 30px; }
+  #intent { width: 100%; max-width: 680px; padding: 12px 16px; font-size: 15px;
+            background: var(--panel); border: 1px solid #3b4250; border-radius: 12px;
+            color: var(--text); outline: none; }
+  #intent:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(96,165,250,.15); }
+  .intent-hint { color: var(--faint); font-size: 12px; margin-top: 6px; }
+  #reco { max-width: 980px; margin-top: 14px; display: none; }
+  #reco.show { display: block; }
+  .reco-card { display: flex; gap: 14px; align-items: flex-start; background: var(--panel);
+               border: 1px solid var(--line); border-radius: 12px; padding: 13px 16px; margin-bottom: 8px; }
+  .reco-card.best { border-color: rgba(96,165,250,.65); background: #151b26; }
+  .reco-rank { font-size: 18px; width: 26px; text-align: center; color: var(--faint); flex: none; }
+  .reco-body { min-width: 0; }
+  .reco-name { font-weight: 700; font-size: 15px; margin-right: 8px; }
+  .ai-badge { background: var(--blue); color: #0e1013; font-weight: 700; font-size: 11px;
+              border-radius: 999px; padding: 1px 10px; margin-right: 6px; }
+  .reco-desc { color: var(--dim); font-size: 12.5px; margin-top: 3px; }
+  .reco-why { margin-top: 6px; font-size: 12px; color: var(--faint); }
+  .kw { display: inline-block; background: rgba(96,165,250,.12); color: var(--blue);
+        border-radius: 6px; padding: 0 6px; margin: 0 3px 3px 0; }
+  .scorebar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 8px; width: 180px; }
+  .scorebar i { display: block; height: 100%; background: var(--blue); border-radius: 2px; }
+  .reco-note { color: var(--faint); font-size: 11.5px; margin-top: 4px; }
+
+  /* 相似/漂移聚簇 */
+  .clusters h2 { font-size: 16px; margin: 6px 0 12px; color: var(--red); display: flex; align-items: center; gap: 8px; }
+  .bang { display: inline-flex; width: 20px; height: 20px; border-radius: 50%;
+          background: var(--red); color: #fff; font-weight: 800; font-size: 13px;
+          align-items: center; justify-content: center; flex: none; }
+  .cluster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; margin-bottom: 34px; }
+  .cluster { border: 1.5px solid rgba(248,113,113,.55); border-radius: 14px; padding: 13px 16px;
+             background: linear-gradient(180deg, rgba(248,113,113,.06), transparent 55%), var(--panel); }
+  .cluster .chead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-weight: 700; font-size: 13.5px; }
+  .ctag { font-size: 11px; border-radius: 999px; padding: 1px 9px; }
+  .ctag.drift { background: rgba(240,180,41,.15); color: var(--amber); border: 1px solid rgba(240,180,41,.4); }
+  .ctag.sim { background: rgba(248,113,113,.13); color: var(--red); border: 1px solid rgba(248,113,113,.4); }
+  .member { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 3px 0; font-size: 13px; }
+  .pairs { margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 7px; }
+  .pair { font-size: 12px; color: var(--dim); padding: 1px 0; }
+  .pct { color: var(--red); font-weight: 700; }
+
+  /* 场景聚类 */
+  section h2 { font-size: 15px; color: var(--dim); font-weight: 600; margin: 26px 0 12px;
+               border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+          padding: 14px 16px; cursor: pointer; }
+  .card:hover { border-color: #3b4250; background: var(--panel2); }
+  .card .top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+  .card .name { font-weight: 700; font-size: 14.5px; }
+  .badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+  .host { color: #0e1013; font-weight: 600; }
+  .warn { background: rgba(248,113,113,.12); color: var(--red); border: 1px solid rgba(248,113,113,.4); }
+  .langbtn { background: none; border: 1px solid var(--line); color: var(--dim);
+             border-radius: 8px; font-size: 12px; padding: 4px 12px; cursor: pointer;
+             font-family: inherit; }
+  .langbtn.active { color: var(--text); border-color: var(--blue); background: rgba(96,165,250,.1); }
+  .mt-note { color: var(--faint); font-size: 10.5px; margin-top: 4px; }
+  .copybtn { background: none; border: 1px solid var(--line); color: var(--faint);
+             border-radius: 6px; font-size: 11px; line-height: 1; padding: 3px 7px;
+             cursor: pointer; font-family: inherit; flex: none; }
+  .copybtn:hover { color: var(--text); border-color: #4b5563; background: var(--panel2); }
+  .copybtn.ok { color: var(--green); border-color: rgba(74,222,128,.5); }
+  .desc { color: var(--dim); font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 3;
+          -webkit-box-orient: vertical; overflow: hidden; }
+  .card.open .desc { -webkit-line-clamp: unset; }
+  .path { color: var(--faint); font-size: 11px; margin-top: 8px; word-break: break-all;
+          font-family: Consolas, monospace; display: none; }
+  .card.open .path { display: block; }
+  .empty { color: var(--faint); padding: 40px 0; text-align: center; display: none; }
+</style>
+</head>
+<body>
+<div style="margin:0 0 18px;padding:10px 16px;border-radius:12px;background:rgba(96,165,250,.1);border:1px solid rgba(96,165,250,.35);color:#93c5fd;font-size:13px"><b>Live Demo</b> · 合成数据，可直接试「找技能 / 理技能」。装到本机：<code style="background:rgba(0,0,0,.35);padding:2px 8px;border-radius:6px">python skillpick.py install</code> · <a href="https://github.com/469910093-ui/Skill-picker" style="color:#bfdbfe">GitHub</a></div><header>
+  <h1>Skill Picker</h1><span class="stats">17 个 skill（含多端副本共 20 份） · 8 个场景 · 3 组相似/漂移聚簇 · 生成于 2026-07-27T06:18 UTC</span>
+  <span style="margin-left:auto;display:inline-flex;gap:4px">
+    <button class="langbtn" data-lang="zh">中文</button>
+    <button class="langbtn" data-lang="en">EN</button>
+  </span>
+</header>
+<div class="readonly" data-zh="✓ 只读模式 — 本工具不会修改、移动或删除任何 skill，仅展示与提醒"
+     data-en="✓ Read-only — this tool never modifies, moves or deletes any skill; display & remind only"></div>
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin:-6px 0 16px"><span style="font-size:12px;border-radius:999px;padding:2px 12px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.35)" title="Demo catalog：合成数据，覆盖率门禁跳过" data-zh="✓ G1 覆盖率" data-en="✓ G1 Coverage"></span><span style="font-size:12px;border-radius:999px;padding:2px 12px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.35)" title="全部 skill 均有有效描述" data-zh="✓ G2 解析质量" data-en="✓ G2 Parse quality"></span><span style="font-size:12px;border-radius:999px;padding:2px 12px;background:rgba(240,180,41,.1);color:#f0b429;border:1px solid rgba(240,180,41,.4)" title="发现同名漂移（演示用）" data-zh="⚠ G3 漂移提醒" data-en="⚠ G3 Drift"></span><span style="font-size:12px;border-radius:999px;padding:2px 12px;background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.35)" title="Demo 环境：黄金用例由真实 install 校验" data-zh="✓ G4 匹配黄金用例" data-en="✓ G4 Golden queries"></span></div>
+
+<div class="tabs">
+  <button class="tabbtn active" data-tab="find">🔍 <span data-zh="找技能" data-en="Find"></span><span class="n" data-zh="意图匹配 · AI 建议" data-en="intent match · AI pick"></span></button>
+  <button class="tabbtn t2" data-tab="tidy">🩺 <span data-zh="理技能" data-en="Tidy"></span><span class="n" data-zh="相似/漂移自查 · 3 组" data-en="similarity/drift check · 3 groups"></span></button>
+</div>
+
+<div class="tabpane active" id="tab-find">
+  <div class="intent-wrap">
+    <input id="intent" type="search"
+           data-ph-zh="输入你的意图，比如：我要做一份周报 / 帮我画个图表 / 写飞书文档…"
+           data-ph-en="Describe your intent, e.g. make a weekly report / draw a chart / edit a video…">
+    <div class="intent-hint"
+         data-zh="输入后即时给出候选 skills、描述与 AI 建议；同时按关联度过滤下方卡片。会话内的建议由 skill-picker 结合真实上下文给出，这里为本地近似。"
+         data-en="Type to get instant candidates with descriptions and an AI pick; cards below are filtered by relevance. In-chat suggestions use real session context; this page is a local approximation."></div>
+    <div id="reco"></div>
+  </div>
+  <div id="sections"><section data-cat="PPT/演示"><h2><span data-zh="PPT/演示（4）" data-en="Slides &amp; Decks (4)"></span></h2><div class="grid"><div class="card" data-text="frontendslides从零或从pptpptx转制炫酷动画html演示文稿要做演讲路演网页版slides时使用buildbeautifulhtmlslidedecksforproductlaunchesandtechtalksusewhentheuserasksforslidespptdeck幻灯片pptslidesdeckpresentation幻灯片ppt演示" data-name="frontend-slides"><div class="top"><span class="name">frontend-slides</span><span class="badge host" style="background:#38bdf8">Cursor 插件</span><button class="copybtn" data-copy="frontend-slides">⧉</button></div><div class="desc">从零或从 PPT/PPTX 转制炫酷动画 HTML 演示文稿。要做演讲/路演网页版 slides 时使用。</div><div class="path">[Cursor 插件] ~/.cursor/plugins/cache/frontend-slides/SKILL.md</div></div><div class="card" data-text="guizangpptskill生成横向翻页网页ppt单html文件含webgl背景章节幕封数据大字报图片网格等模板当用户需要制作分享演讲发布会风格的网页ppt时使用generatehorizontalswipewebpptsinglehtmlwithwebglbackgroundschaptercoversbignumberboardsandimagegridstwostylesemagazineeinkandswissinternationalppt翻页webgl模板杂志风瑞士风ppt演示" data-name="guizang-ppt-skill"><div class="top"><span class="name">guizang-ppt-skill</span><span class="badge host" style="background:#d97757">Claude Code</span><button class="copybtn" data-copy="guizang-ppt-skill">⧉</button></div><div class="desc">生成横向翻页网页 PPT（单 HTML 文件），含 WebGL 背景、章节幕封、数据大字报、图片网格等模板。当用户需要制作分享 / 演讲 / 发布会风格的网页 PPT 时使用。</div><div class="path">[Claude Code] ~/.claude-code/skills/guizang-ppt-skill/SKILL.md</div></div><div class="card" data-text="htmlppthtmlppt工作室模板驱动的多风格静态html演示文稿用户要ppt幻灯片演讲稿小红书图文时使用htmlpptstudioauthorprofessionalstatichtmlpresentationsinmanystylesusewhentheuserasksforapresentationpptslideskeynotedeckslideshow幻灯片演讲稿做一份pptpptslidespresentationdeck幻灯片模板ppt演示" data-name="html-ppt"><div class="top"><span class="name">html-ppt</span><span class="badge host" style="background:#d97757">Claude Code</span><button class="copybtn" data-copy="html-ppt">⧉</button></div><div class="desc">HTML PPT 工作室：模板驱动的多风格静态 HTML 演示文稿。用户要 PPT/幻灯片/演讲稿/小红书图文时使用。</div><div class="path">[Claude Code] ~/.claude-code/skills/html-ppt/SKILL.md</div></div><div class="card" data-text="mckinseyconsultantmckinsey顾问式问题解决系统从商业问题出发通过假设驱动的结构化分析方法生成mckinsey风格研究报告和ppt融合mece原则issuetree拆解dummypage设计mckinsey顾问式问题解决系统从商业问题出发通过假设驱动的结构化分析方法生成mckinsey风格研究报告和ppt融合mece原则issuetree拆解dummypage设计mckinseyppt分析报告设计ppt演示" data-name="mckinsey-consultant"><div class="top"><span class="name">mckinsey-consultant</span><span class="badge host" style="background:#d97757">Claude Code</span><button class="copybtn" data-copy="mckinsey-consultant">⧉</button></div><div class="desc">McKinsey顾问式问题解决系统。从商业问题出发,通过假设驱动的结构化分析方法,生成McKinsey风格研究报告和PPT。融合MECE原则、Issue Tree拆解、Dummy Page设计。</div><div class="path">[Claude Code] ~/.claude-code/skills/mckinsey-consultant/SKILL.md</div></div></div></section><section data-cat="设计/Figma"><h2><span data-zh="设计/Figma（3）" data-en="Design / Figma (3)"></span></h2><div class="grid"><div class="card" data-text="figmadesigntocode把figma设计稿实现为代码designtocode前必读getdesigncontext的正确用法与实现步骤mandatoryprerequisitebeforegetdesigncontexttriggerwhenevertheuserwantstoimplementbuildportorcodeupafigmadesignascodefigmagetdesigncontextscreenshotcodeconnecttokens设计figma" data-name="figma-design-to-code"><div class="top"><span class="name">figma-design-to-code</span><span class="badge host" style="background:#d97757">Claude Code</span><button class="copybtn" data-copy="figma-design-to-code">⧉</button></div><div class="desc">把 Figma 设计稿实现为代码（design-to-code）前必读：get_design_context 的正确用法与实现步骤。</div><div class="path">[Claude Code] ~/.claude-code/skills/figma-design-to-code/SKILL.md</div></div><div class="card" data-text="figmageneratedesign把应用页面多区块布局写入figmacodetodesign发现设计系统组件变量并逐区搭建界面要在figma里建页面落地页时使用usethisskillalongsidefigmausewhenthetaskinvolvestranslatinganapplicationpageviewormultisectionlayoutintofigmatriggerswritetofigmacreateinfigmafromcodebuildalandingpageinfigmamockupfigmadesignsystemcomponentsvariablesimportassemble设计figma" data-name="figma-generate-design"><div class="top"><span class="name">figma-generate-design</span><span class="badge host" style="background:#d97757">Claude Code</span><button class="copybtn" data-copy="figma-generate-design">⧉</button></div><div class="desc">把应用页面/多区块布局写入 Figma（code-to-design）：发现设计系统组件、变量并逐区搭建界面。要在 Figma 里建页面/落地页时使用。</div><div class="path">[Claude Code] ~/.claude-code/skills/figma-generate-design/SKILL.md</div></div><div class="card" data-text="figmause调用usefigma前必读在figma文件里创建编辑节点变量组件变体自动布局的规范mandatoryprerequisitebeforeeveryusefigmatoolcalltriggerforwriteactionsinthefigmafilecontextcreateeditdeletenodesvariablescomponentsandvariantsautolayoutfillsfigmapluginapivariablescomponentsvariants设计figma" data-name="figma-use"><div class="top"><span class="name">figma-use</span><span class="badge host" style="background:#d97757">Claude Code</span><button class="copybtn" data-copy="figma-use">⧉</button></div><div class="desc">调用 use_figma 前必读：在 Figma 文件里创建/编辑节点、变量、组件变体、自动布局的规范。</div><div class="path">[Claude Code] ~/.claude-code/skills/figma-use/SKILL.md</div></div></div></section><section data-cat="飞书/Lark 办公"><h2><span data-zh="飞书/Lark 办公（3）" data-en="Feishu / Lark Office (3)"></span></h2><div class="grid"><div class="card" data-text="gochinaweeklyreviewgochina五产线周度经营复盘飞书docxxml看板对齐数据驱动calloutantv结论图qa门禁与一键编排usewhentheusermentionsgochina复盘周复盘gochina5lineweeklybusinessreviewfeishudocxxmldashboardalignedmetricsdatadrivencalloutsminmaxhighlightingantvchartsqagatesandoneclickorchestration复盘周报gochina飞书qa飞书lark办公" data-name="gochina-weekly-review"><div class="top"><span class="name">gochina-weekly-review</span><span class="badge host" style="background:#d97757">Claude Code</span><button class="copybtn" data-copy="gochina-weekly-review">⧉</button></div><div class="desc">GOCHINA 五产线周度经营复盘（飞书 DocxXML）：看板对齐、数据驱动 callout、AntV 结论图、QA 门禁与一键编排。Use when the user mentions GOCHINA 复盘、周复盘。</div><div class="path">[Claude Code] ~/.claude-code/skills/gochina-weekly-review/SKILL.md</div></div><div class="card" data-text="larkcalendar飞书日历管理日历日程和会议室查看搜索日程创建更新日程查询忙闲预定会议室不负责查询过去的视频会议记录feishucalendarviewsearchcreateupdateeventsmanageattendeescheckfreebusybookmeetingrooms飞书日历日程会议室飞书lark办公" data-name="lark-calendar"><div class="top"><span class="name">lark-calendar</span><span class="badge host" style="background:#d97757">Claude Code</span><button class="copybtn" data-copy="lark-calendar">⧉</button></div><div class="desc">飞书日历：管理日历日程和会议室。查看/搜索日程、创建/更新日程、查询忙闲、预定会议室。不负责查询过去的视频会议记录。</div><div class="path">[Claude Code] ~/.claude-code/skills/lark-calendar/SKILL.md</div></div><div class="card" data-text="larkdoc飞书云文档docxwiki文档读取和编辑飞书文档内容当用户给出文档url或token或需要查看创建编辑文档插入或下载文档图片附件时使用feishudocsdocxwikireadandeditdocumentcontentinsertdownloadimagesusewhengivenadocurltokenorwhencreatingeditingfeishudocuments飞书文档docxwikitoken编辑飞书lark办公" data-name="lark-doc"><div class="top"><span class="name">lark-doc</span><span class="badge host" style="background:#d97757">Claude Code</span><span class="badge host" style="background:#7c8cf8">Cursor</span><button class="copybtn" data-copy="lark-doc">⧉</button></div><div class="desc">飞书云文档（Docx / Wiki 文档）：读取和编辑飞书文档内容。当用户给出文档 URL 或 token，或需要查看、创建、编辑文档、插入或下载文档图片附件时使用。</div><div class="path">[Claude Code] ~/.claude-code/skills/lark-doc/SKILL.md<br>[Cursor] ~/.cursor/skills/lark-doc/SKILL.md</div></div></div></section><section data-cat="视频/图像/创意"><h2><span data-zh="视频/图像/创意（2）" data-en="Video / Image / Creative (2)"></span></h2><div class="grid"><div class="card" data-text="aishortdrama精细化ai短剧ip创作技能三阶段架构剧本ref图分镜图视频首帧出片用户提到短剧微短剧竖屏剧ai短剧分镜出片时触发finegrainedaishortdramaipcreationv06scriptrefimagesstoryboardgridsasvideofirstframesepisoderenderingwithautomodelpickuseforverticalshortdramastoryboardsjimengseedanceproduction短剧分镜视频出片剧本设计视频图像创意" data-name="ai-short-drama"><div class="top"><span class="name">ai-short-drama</span><span class="badge host" style="background:#d97757">Claude Code</span><button class="copybtn" data-copy="ai-short-drama">⧉</button></div><div class="desc">精细化 AI 短剧 IP 创作技能。三阶段架构：剧本+ref图、分镜图（视频首帧）、出片。用户提到短剧、微短剧、竖屏剧、AI 短剧、分镜、出片时触发。</div><div class="path">[Claude Code] ~/.claude-code/skills/ai-short-drama/SKILL.md</div></div><div class="card" data-text="videouse对话式剪视频转写剪辑调色生成叠加动画烧录字幕口播混剪教程旅拍访谈都能剪editanyvideobyconversationtranscribecutcolorgradegenerateoverlayanimationsburnsubtitlesfortalkingheadsmontagestutorialstravelinterviewsnopresetsnomenusvideoeditcuttranscribesubtitlesffmpegcolorgrade视频图像创意" data-name="video-use"><div class="top"><span class="name">video-use</span><span class="badge host" style="background:#d97757">Claude Code</span><button class="copybtn" data-copy="video-use">⧉</button></div><div class="desc">对话式剪视频：转写、剪辑、调色、生成叠加动画、烧录字幕——口播、混剪、教程、旅拍、访谈都能剪。</div><div class="path">[Claude Code] ~/.claude-code/skills/video-use/SKILL.md</div></div></div></section><section data-cat="周报/复盘/数据分析"><h2><span data-zh="周报/复盘/数据分析（2）" data-en="Reports &amp; Analytics (2)"></span></h2><div class="grid"><div class="card" data-text="ibuhtmlweeklyoverview通用周报html总览生成能力读取任意周报文档自动提炼每个项目的进展卡点风险待办四象限产出单文件交互式html当用户提到周报html一屏看完周报时使用universalweeklyreporthtmloverviewreadsanyweeklydocfeishumarkdowntextdistillseachprojectintoprogressblockersrisksnextweekquadrantsoutputsasingleinteractivehtmlpage周报html四象限卡片图表周报复盘数据分析" data-name="ibu-html-weekly-overview"><div class="top"><span class="name">ibu-html-weekly-overview</span><span class="badge host" style="background:#d97757">Claude Code</span><button class="copybtn" data-copy="ibu-html-weekly-overview">⧉</button></div><div class="desc">通用周报 HTML 总览生成能力：读取任意周报文档，自动提炼每个项目的进展卡点风险待办四象限，产出单文件交互式 HTML。当用户提到周报 HTML、一屏看完周报时使用。</div><div class="path">[Claude Code] ~/.claude-code/skills/ibu-html-weekly-overview/SKILL.md</div></div><div class="card" data-text="workreportgenerateweeklyworkreportsfromlocalgithistoryslightlydifferentcopyfromtheclaudeversiondemodriftgenerateweeklyworkreportsfromlocalgithistoryslightlydifferentcopyfromtheclaudeversiondemodriftweeklyreportgitsummary周报复盘数据分析" data-name="work-report"><div class="top"><span class="name">work-report</span><span class="badge host" style="background:#d97757">Claude Code</span><span class="badge host" style="background:#7c8cf8">Cursor</span><span class="badge warn">! 同名漂移</span><button class="copybtn" data-copy="work-report">⧉</button></div><div class="desc">Generate weekly work reports from local git history. Slightly different copy from the Claude version — demo drift.</div><div class="path">[Claude Code] ~/.claude-code/skills/work-report/SKILL.md<br>[Cursor] ~/.cursor/skills/work-report/SKILL.md</div></div></div></section><section data-cat="图表/可视化"><h2><span data-zh="图表/可视化（1）" data-en="Charts &amp; Visualization (1)"></span></h2><div class="grid"><div class="card" data-text="chartvisualization将数据可视化为图表当用户需要生成柱状图折线图饼图散点图雷达图桑基图思维导图流程图等图表时调用此技能通过curl工具调用antvapi生成图表图片visualizedataaschartsviatheantvapicurlbarlinepiescatterradarsankeymindmapflowchartandmoreusewhentheuserneedsachartimage图表柱状图折线图饼图antv可视化图表可视化" data-name="chart-visualization"><div class="top"><span class="name">chart-visualization</span><span class="badge host" style="background:#d97757">Claude Code</span><span class="badge host" style="background:#3aa981">Codex</span><button class="copybtn" data-copy="chart-visualization">⧉</button></div><div class="desc">将数据可视化为图表。当用户需要生成柱状图、折线图、饼图、散点图、雷达图、桑基图、思维导图、流程图等图表时调用此技能，通过 curl 工具调用 AntV API 生成图表图片。</div><div class="path">[Claude Code] ~/.claude-code/skills/chart-visualization/SKILL.md<br>[Codex] ~/.codex/skills/chart-visualization/SKILL.md</div></div></div></section><section data-cat="出行/电商业务"><h2><span data-zh="出行/电商业务（1）" data-en="Travel &amp; E-commerce (1)"></span></h2><div class="grid"><div class="card" data-text="baiduaimap百度地图agentplan无需成为百度地图开发者立即接入百度地图为agent场景原生设计的地图能力例如ai地点检索ai路线规划地理编码等baidumapsagentplanreadytousemaptoolsforagentsaiplacesearchrouteplanninggeocodingweathernobaidudeveloperaccountneeded百度地图api路线规划地理编码出行电商业务" data-name="baidu-ai-map"><div class="top"><span class="name">baidu-ai-map</span><span class="badge host" style="background:#d97757">Claude Code</span><button class="copybtn" data-copy="baidu-ai-map">⧉</button></div><div class="desc">百度地图 Agent Plan，无需成为百度地图开发者，立即接入百度地图为 Agent 场景原生设计的地图能力，例如 AI 地点检索、AI 路线规划、地理编码等。</div><div class="path">[Claude Code] ~/.claude-code/skills/baidu-ai-map/SKILL.md</div></div></div></section><section data-cat="写作/内容运营"><h2><span data-zh="写作/内容运营（1）" data-en="Writing &amp; Content (1)"></span></h2><div class="grid"><div class="card" data-text="mimengwriting咪蒙爆款文章写作技巧适用于需要创作10万阅读量爆款文章情感共鸣类内容故事叙事或社会议题评论时使用掌握标题制造开篇设计情绪调动等核心技巧mimengstyleviralarticletechniquesheadlinesopeningsemotionalpacinggoldenquotesstorytellingfor100kreademotionalsocialcommentarypieces爆款文章标题开篇设计金句写作内容运营" data-name="mimeng-writing"><div class="top"><span class="name">mimeng-writing</span><span class="badge host" style="background:#d97757">Claude Code</span><button class="copybtn" data-copy="mimeng-writing">⧉</button></div><div class="desc">咪蒙爆款文章写作技巧。适用于需要创作10万+阅读量爆款文章、情感共鸣类内容、故事叙事或社会议题评论时使用。掌握标题制造、开篇设计、情绪调动等核心技巧。</div><div class="path">[Claude Code] ~/.claude-code/skills/mimeng-writing/SKILL.md</div></div></div></section></div>
+  <div class="empty" id="empty" data-zh="没有匹配的 skill" data-en="No matching skill"></div>
+</div>
+
+<div class="tabpane" id="tab-tidy">
+  <div style="border:1px solid rgba(240,180,41,.4);border-radius:12px;padding:12px 16px;margin-bottom:14px;background:rgba(240,180,41,.1)"><b style="color:#f0b429">⚠ G3 漂移提醒 WARN</b><div style="color:var(--dim);font-size:13px;margin-top:2px">发现同名漂移（演示用）</div><ul><li style="color:var(--dim);font-size:12px;margin-left:18px"><code>work-report</code></li></ul><div style="color:#f0b429;font-size:12.5px;margin-top:4px">处理：打开「理技能」tab 查看，自行决定是否合并</div></div>
+  <div class="clusters">
+    <h2><span class="bang">!</span><span data-zh="相似 / 漂移聚簇检查（3 组）— 建议人工确认后自行取舍，工具不代改"
+        data-en="Similarity / drift clusters (3 groups) — review manually; the tool never auto-fixes"></span></h2>
+    <div class="cluster-grid"><div class="cluster"><div class="chead"><span class="bang">!</span>work-report<span class="ctag drift">含同名漂移</span></div><div class="member"><span class="bang" style="width:14px;height:14px;font-size:10px">!</span><b>work-report</b><span class="badge host" style="background:#d97757">Claude Code</span></div><div class="member"><span class="bang" style="width:14px;height:14px;font-size:10px">!</span><b>work-report</b><span class="badge host" style="background:#7c8cf8">Cursor</span></div><div class="pairs"><div class="pair">work-report (cursor) ↔ work-report (claude-code)：同名漂移</div></div></div><div class="cluster"><div class="chead"><span class="bang">!</span>chart-visualization<span class="ctag sim">高度相似</span></div><div class="member"><span class="bang" style="width:14px;height:14px;font-size:10px">!</span><b>chart-visualization</b><span class="badge host" style="background:#d97757">Claude Code</span></div><div class="member"><span class="bang" style="width:14px;height:14px;font-size:10px">!</span><b>chart-visualization</b><span class="badge host" style="background:#3aa981">Codex</span></div><div class="pairs"><div class="pair">chart-visualization (codex) ↔ chart-visualization (claude-code)：同名一致</div></div></div><div class="cluster"><div class="chead"><span class="bang">!</span>lark-doc<span class="ctag sim">高度相似</span></div><div class="member"><span class="bang" style="width:14px;height:14px;font-size:10px">!</span><b>lark-doc</b><span class="badge host" style="background:#d97757">Claude Code</span></div><div class="member"><span class="bang" style="width:14px;height:14px;font-size:10px">!</span><b>lark-doc</b><span class="badge host" style="background:#7c8cf8">Cursor</span></div><div class="pairs"><div class="pair">lark-doc (cursor) ↔ lark-doc (claude-code)：同名一致</div></div></div></div>
+  </div>
+</div>
+
+<script>
+const SKILLS = [{"name": "figma-generate-design", "desc": "Use this skill alongside figma-use when the task involves translating an application page, view, or multi-section layout into Figma. Triggers: write to Figma, create in Figma from code, build a landing page in Figma, moc", "descZh": "把应用页面/多区块布局写入 Figma（code-to-design）：发现设计系统组件、变量并逐区搭建界面。要在 Figma 里建页面/落地页时使用。", "descEn": "Use this skill alongside figma-use when the task involves translating an application page, view, or multi-section layout into Figma. Triggers: write to Figma, create in Figma from code, build a landing page in Figma, moc", "mtZh": true, "mtEn": false, "cat": "设计/Figma", "catEn": "Design / Figma", "cats": ["设计/Figma", "Agent/开发工具链"], "kw": "figma design system components variables import assemble", "hosts": [["Claude Code", "#d97757"]], "warn": ""}, {"name": "figma-design-to-code", "desc": "MANDATORY prerequisite before get_design_context. Trigger whenever the user wants to implement, build, port, or code up a Figma design as code.", "descZh": "把 Figma 设计稿实现为代码（design-to-code）前必读：get_design_context 的正确用法与实现步骤。", "descEn": "MANDATORY prerequisite before get_design_context. Trigger whenever the user wants to implement, build, port, or code up a Figma design as code.", "mtZh": true, "mtEn": false, "cat": "设计/Figma", "catEn": "Design / Figma", "cats": ["设计/Figma", "Agent/开发工具链", "出行/电商业务"], "kw": "figma get_design_context screenshot code connect tokens", "hosts": [["Claude Code", "#d97757"]], "warn": ""}, {"name": "figma-use", "desc": "MANDATORY prerequisite before every use_figma tool call. Trigger for write actions in the Figma file context: create edit delete nodes, variables, components and variants, auto-layout, fills.", "descZh": "调用 use_figma 前必读：在 Figma 文件里创建/编辑节点、变量、组件变体、自动布局的规范。", "descEn": "MANDATORY prerequisite before every use_figma tool call. Trigger for write actions in the Figma file context: create edit delete nodes, variables, components and variants, auto-layout, fills.", "mtZh": true, "mtEn": false, "cat": "设计/Figma", "catEn": "Design / Figma", "cats": ["设计/Figma", "Agent/开发工具链", "出行/电商业务"], "kw": "figma plugin api variables components variants", "hosts": [["Claude Code", "#d97757"]], "warn": ""}, {"name": "video-use", "desc": "Edit any video by conversation. Transcribe, cut, color grade, generate overlay animations, burn subtitles - for talking heads, montages, tutorials, travel, interviews. No presets, no menus.", "descZh": "对话式剪视频：转写、剪辑、调色、生成叠加动画、烧录字幕——口播、混剪、教程、旅拍、访谈都能剪。", "descEn": "Edit any video by conversation. Transcribe, cut, color grade, generate overlay animations, burn subtitles - for talking heads, montages, tutorials, travel, interviews. No presets, no menus.", "mtZh": true, "mtEn": false, "cat": "视频/图像/创意", "catEn": "Video / Image / Creative", "cats": ["视频/图像/创意", "Agent/开发工具链", "出行/电商业务"], "kw": "video edit cut transcribe subtitles ffmpeg color grade", "hosts": [["Claude Code", "#d97757"]], "warn": ""}, {"name": "work-report", "desc": "Generate weekly work reports from local git history. Slightly different copy from the Claude version — demo drift.", "descZh": "Generate weekly work reports from local git history. Slightly different copy from the Claude version — demo drift.", "descEn": "Generate weekly work reports from local git history. Slightly different copy from the Claude version — demo drift.", "mtZh": false, "mtEn": false, "cat": "周报/复盘/数据分析", "catEn": "Reports & Analytics", "cats": ["周报/复盘/数据分析", "出行/电商业务"], "kw": "weekly report git summary", "hosts": [["Claude Code", "#d97757"], ["Cursor", "#7c8cf8"]], "warn": "同名漂移"}, {"name": "ibu-html-weekly-overview", "desc": "通用周报 HTML 总览生成能力：读取任意周报文档，自动提炼每个项目的进展卡点风险待办四象限，产出单文件交互式 HTML。当用户提到周报 HTML、一屏看完周报时使用。", "descZh": "通用周报 HTML 总览生成能力：读取任意周报文档，自动提炼每个项目的进展卡点风险待办四象限，产出单文件交互式 HTML。当用户提到周报 HTML、一屏看完周报时使用。", "descEn": "Universal weekly-report HTML overview: reads any weekly doc (Feishu/Markdown/text), distills each project into progress/blockers/risks/next-week quadrants, outputs a single interactive HTML page.", "mtZh": false, "mtEn": true, "cat": "周报/复盘/数据分析", "catEn": "Reports & Analytics", "cats": ["周报/复盘/数据分析"], "kw": "周报 HTML 四象限 卡片 图表", "hosts": [["Claude Code", "#d97757"]], "warn": ""}, {"name": "lark-doc", "desc": "飞书云文档（Docx / Wiki 文档）：读取和编辑飞书文档内容。当用户给出文档 URL 或 token，或需要查看、创建、编辑文档、插入或下载文档图片附件时使用。", "descZh": "飞书云文档（Docx / Wiki 文档）：读取和编辑飞书文档内容。当用户给出文档 URL 或 token，或需要查看、创建、编辑文档、插入或下载文档图片附件时使用。", "descEn": "Feishu Docs (Docx/Wiki): read and edit document content, insert/download images. Use when given a doc URL/token or when creating/editing Feishu documents.", "mtZh": false, "mtEn": true, "cat": "飞书/Lark 办公", "catEn": "Feishu / Lark Office", "cats": ["飞书/Lark 办公", "视频/图像/创意"], "kw": "飞书 文档 docx wiki token 编辑", "hosts": [["Claude Code", "#d97757"], ["Cursor", "#7c8cf8"]], "warn": ""}, {"name": "html-ppt", "desc": "HTML PPT Studio - author professional static HTML presentations in many styles. Use when the user asks for a presentation, PPT, slides, keynote, deck, slideshow, 幻灯片, 演讲稿, 做一份 PPT.", "descZh": "HTML PPT 工作室：模板驱动的多风格静态 HTML 演示文稿。用户要 PPT/幻灯片/演讲稿/小红书图文时使用。", "descEn": "HTML PPT Studio - author professional static HTML presentations in many styles. Use when the user asks for a presentation, PPT, slides, keynote, deck, slideshow, 幻灯片, 演讲稿, 做一份 PPT.", "mtZh": true, "mtEn": false, "cat": "PPT/演示", "catEn": "Slides & Decks", "cats": ["PPT/演示", "Agent/开发工具链"], "kw": "ppt slides presentation deck 幻灯片 模板", "hosts": [["Claude Code", "#d97757"]], "warn": ""}, {"name": "guizang-ppt-skill", "desc": "生成横向翻页网页 PPT（单 HTML 文件），含 WebGL 背景、章节幕封、数据大字报、图片网格等模板。当用户需要制作分享 / 演讲 / 发布会风格的网页 PPT 时使用。", "descZh": "生成横向翻页网页 PPT（单 HTML 文件），含 WebGL 背景、章节幕封、数据大字报、图片网格等模板。当用户需要制作分享 / 演讲 / 发布会风格的网页 PPT 时使用。", "descEn": "Generate horizontal swipe web PPT (single HTML) with WebGL backgrounds, chapter covers, big-number boards and image grids. Two styles: e-magazine × e-ink, and Swiss International.", "mtZh": false, "mtEn": true, "cat": "PPT/演示", "catEn": "Slides & Decks", "cats": ["PPT/演示", "视频/图像/创意", "Agent/开发工具链"], "kw": "PPT 翻页 WebGL 模板 杂志风 瑞士风", "hosts": [["Claude Code", "#d97757"]], "warn": ""}, {"name": "chart-visualization", "desc": "将数据可视化为图表。当用户需要生成柱状图、折线图、饼图、散点图、雷达图、桑基图、思维导图、流程图等图表时调用此技能，通过 curl 工具调用 AntV API 生成图表图片。", "descZh": "将数据可视化为图表。当用户需要生成柱状图、折线图、饼图、散点图、雷达图、桑基图、思维导图、流程图等图表时调用此技能，通过 curl 工具调用 AntV API 生成图表图片。", "descEn": "Visualize data as charts via the AntV API (curl): bar, line, pie, scatter, radar, sankey, mind-map, flowchart and more. Use when the user needs a chart image.", "mtZh": false, "mtEn": true, "cat": "图表/可视化", "catEn": "Charts & Visualization", "cats": ["图表/可视化", "视频/图像/创意"], "kw": "图表 柱状图 折线图 饼图 AntV 可视化", "hosts": [["Claude Code", "#d97757"], ["Codex", "#3aa981"]], "warn": ""}, {"name": "gochina-weekly-review", "desc": "GOCHINA 五产线周度经营复盘（飞书 DocxXML）：看板对齐、数据驱动 callout、AntV 结论图、QA 门禁与一键编排。Use when the user mentions GOCHINA 复盘、周复盘。", "descZh": "GOCHINA 五产线周度经营复盘（飞书 DocxXML）：看板对齐、数据驱动 callout、AntV 结论图、QA 门禁与一键编排。Use when the user mentions GOCHINA 复盘、周复盘。", "descEn": "GOCHINA 5-line weekly business review (Feishu DocxXML): dashboard-aligned metrics, data-driven callouts, min/max highlighting, AntV charts, QA gates and one-click orchestration.", "mtZh": false, "mtEn": true, "cat": "飞书/Lark 办公", "catEn": "Feishu / Lark Office", "cats": ["飞书/Lark 办公", "周报/复盘/数据分析", "图表/可视化"], "kw": "复盘 周报 GOCHINA 飞书 QA", "hosts": [["Claude Code", "#d97757"]], "warn": ""}, {"name": "mckinsey-consultant", "desc": "McKinsey顾问式问题解决系统。从商业问题出发,通过假设驱动的结构化分析方法,生成McKinsey风格研究报告和PPT。融合MECE原则、Issue Tree拆解、Dummy Page设计。", "descZh": "McKinsey顾问式问题解决系统。从商业问题出发,通过假设驱动的结构化分析方法,生成McKinsey风格研究报告和PPT。融合MECE原则、Issue Tree拆解、Dummy Page设计。", "descEn": "McKinsey顾问式问题解决系统。从商业问题出发,通过假设驱动的结构化分析方法,生成McKinsey风格研究报告和PPT。融合MECE原则、Issue Tree拆解、Dummy Page设计。", "mtZh": false, "mtEn": false, "cat": "PPT/演示", "catEn": "Slides & Decks", "cats": ["PPT/演示"], "kw": "McKinsey PPT 分析 报告 设计", "hosts": [["Claude Code", "#d97757"]], "warn": ""}, {"name": "baidu-ai-map", "desc": "百度地图 Agent Plan，无需成为百度地图开发者，立即接入百度地图为 Agent 场景原生设计的地图能力，例如 AI 地点检索、AI 路线规划、地理编码等。", "descZh": "百度地图 Agent Plan，无需成为百度地图开发者，立即接入百度地图为 Agent 场景原生设计的地图能力，例如 AI 地点检索、AI 路线规划、地理编码等。", "descEn": "Baidu Maps Agent Plan: ready-to-use map tools for agents — AI place search, route planning, geocoding, weather — no Baidu developer account needed.", "mtZh": false, "mtEn": true, "cat": "出行/电商业务", "catEn": "Travel & E-commerce", "cats": ["出行/电商业务"], "kw": "百度地图 API 路线规划 地理编码", "hosts": [["Claude Code", "#d97757"]], "warn": ""}, {"name": "ai-short-drama", "desc": "精细化 AI 短剧 IP 创作技能。三阶段架构：剧本+ref图、分镜图（视频首帧）、出片。用户提到短剧、微短剧、竖屏剧、AI 短剧、分镜、出片时触发。", "descZh": "精细化 AI 短剧 IP 创作技能。三阶段架构：剧本+ref图、分镜图（视频首帧）、出片。用户提到短剧、微短剧、竖屏剧、AI 短剧、分镜、出片时触发。", "descEn": "Fine-grained AI short-drama IP creation (v0.6): script + ref images, storyboard grids as video first-frames, episode rendering with auto model pick. Use for vertical short drama, storyboards, Jimeng/Seedance production.", "mtZh": false, "mtEn": true, "cat": "视频/图像/创意", "catEn": "Video / Image / Creative", "cats": ["视频/图像/创意"], "kw": "短剧 分镜 视频 出片 剧本 设计", "hosts": [["Claude Code", "#d97757"]], "warn": ""}, {"name": "mimeng-writing", "desc": "咪蒙爆款文章写作技巧。适用于需要创作10万+阅读量爆款文章、情感共鸣类内容、故事叙事或社会议题评论时使用。掌握标题制造、开篇设计、情绪调动等核心技巧。", "descZh": "咪蒙爆款文章写作技巧。适用于需要创作10万+阅读量爆款文章、情感共鸣类内容、故事叙事或社会议题评论时使用。掌握标题制造、开篇设计、情绪调动等核心技巧。", "descEn": "Mimeng-style viral article techniques: headlines, openings, emotional pacing, golden quotes, storytelling — for 100k+ read emotional/social commentary pieces.", "mtZh": false, "mtEn": true, "cat": "写作/内容运营", "catEn": "Writing & Content", "cats": ["写作/内容运营"], "kw": "爆款 文章 标题 开篇设计 金句", "hosts": [["Claude Code", "#d97757"]], "warn": ""}, {"name": "lark-calendar", "desc": "飞书日历：管理日历日程和会议室。查看/搜索日程、创建/更新日程、查询忙闲、预定会议室。不负责查询过去的视频会议记录。", "descZh": "飞书日历：管理日历日程和会议室。查看/搜索日程、创建/更新日程、查询忙闲、预定会议室。不负责查询过去的视频会议记录。", "descEn": "Feishu Calendar: view/search/create/update events, manage attendees, check free-busy, book meeting rooms.", "mtZh": false, "mtEn": true, "cat": "飞书/Lark 办公", "catEn": "Feishu / Lark Office", "cats": ["飞书/Lark 办公"], "kw": "飞书 日历 日程 会议室", "hosts": [["Claude Code", "#d97757"]], "warn": ""}, {"name": "frontend-slides", "desc": "Build beautiful HTML slide decks for product launches and tech talks. Use when the user asks for slides, PPT, deck, 幻灯片.", "descZh": "从零或从 PPT/PPTX 转制炫酷动画 HTML 演示文稿。要做演讲/路演网页版 slides 时使用。", "descEn": "Build beautiful HTML slide decks for product launches and tech talks. Use when the user asks for slides, PPT, deck, 幻灯片.", "mtZh": true, "mtEn": false, "cat": "PPT/演示", "catEn": "Slides & Decks", "cats": ["PPT/演示", "Agent/开发工具链"], "kw": "ppt slides deck presentation 幻灯片", "hosts": [["Cursor 插件", "#38bdf8"]], "warn": ""}];
+const R = {"syn": {"剪": "cut edit editing clip trim 剪辑 剪片", "剪辑": "edit editing cut clip capcut premiere", "视频": "video 影片 短片", "音频": "audio 声音", "字幕": "caption subtitle 转写", "图表": "chart plot graph 可视化", "画图": "chart draw image", "图片": "image picture photo 配图", "周报": "weekly report 汇报", "日报": "daily report", "复盘": "review retrospective", "文档": "doc docx document 飞书文档", "表格": "sheet table bitable excel 电子表格", "幻灯片": "slides ppt pptx presentation deck", "演示": "slides ppt presentation deck", "会议": "meeting minutes 纪要", "邮件": "mail email", "日程": "calendar schedule", "地图": "map poi 位置", "播客": "podcast 音频", "翻译": "translate translation", "爬虫": "crawl scrape fetch", "部署": "deploy deployment 发布", "测试": "test testing qa", "海报": "poster infographic 信息图", "信息图": "infographic poster", "设计": "figma figjam mockup prototype 原型 视觉设计", "平面": "figma graphic poster 海报 视觉设计", "平面设计": "figma figjam mockup graphic poster 视觉设计", "原型": "prototype mockup figma", "界面": "figma mockup ui ux", "写作": "write writing 文章 文案", "文案": "copy copywriting 写作 write", "数据": "data bigquery sql 分析", "分析": "analysis analytics 数据", "皮肤": "theme 主题", "插件": "plugin extension 扩展"}, "weak_syn": ["design", "designer", "ui", "ux", "image", "data", "write", "analysis"], "design_triggers": ["设计", "平面", "平面设计"], "design_fallback": ["design", "designer", "ui", "ux"], "stopwords": ["我要", "我想", "帮我", "请你", "一下", "一份", "一个", "需要", "怎么", "如何", "用哪个", "能不能", "有没有", "什么", "skill", "skills"], "weights": {"name": 0.5, "desc": 0.3, "kw": 0.2, "cross": 1.5, "kw_cross": 1.2, "name_substr": 0.45, "desc_substr": 0.2, "desc_substr_max_df": 0.12, "cat_pin": 0.35, "min_score": 0.15, "syn": 0.85, "weak_syn": 0.35, "len2_boost": 1.6, "idf_floor": 0.3}};   // 单一真相源 rules.json（与 Python matching.py 共用）
+const W = R.weights;
+const stripStop = s => { R.stopwords.forEach(w => { s = s.split(w).join(''); }); return s; };
+const norm = s => s.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ').replace(/\s+/g, ' ').trim();
+const isCJK = ch => ch >= '\u4e00' && ch <= '\u9fff';
+
+// 分词：文档侧保留中文单字+二元组；查询侧只用长度≥2 的词（避免「设」「计」满天飞）
+function tokenize(s, {query=false} = {}) {
+  const toks = new Set();
+  for (const word of norm(s).split(' ')) {
+    if (!word) continue;
+    if (/^[a-z0-9]+$/.test(word)) { toks.add(word); continue; }
+    const chars = [...word];
+    for (let i = 0; i < chars.length; i++) {
+      if (isCJK(chars[i])) {
+        if (!query) toks.add(chars[i]);  // 单字仅索引侧保留
+        if (i + 1 < chars.length && isCJK(chars[i]) && isCJK(chars[i+1]))
+          toks.add(chars[i] + chars[i+1]);
+      } else {
+        let j = i; while (j < chars.length && !isCJK(chars[j])) j++;
+        toks.add(chars.slice(i, j).join('')); i = j - 1;
+      }
+    }
+    if (query && word.length >= 2) toks.add(word);  // 整词「设计」本身
+  }
+  return toks;
+}
+
+// 预处理字段 token + IDF；描述用中英双语一起建索引（中文意图也能打中英文 skill，反之亦然）
+const DF = new Map();
+SKILLS.forEach(s => {
+  s._name = tokenize(s.name);
+  s._desc = tokenize((s.descZh || '') + ' ' + (s.descEn || ''));
+  s._kw = tokenize(s.kw || ''); s._cat = norm(s.cat);
+  s._nt = norm(s.name); s._dt = norm((s.descZh || '') + ' ' + (s.descEn || '')); s._kt = norm(s.kw || '');
+  new Set([...s._name, ...s._desc, ...s._kw]).forEach(t => DF.set(t, (DF.get(t) || 0) + 1));
+});
+const byName = new Map(SKILLS.map(s => [s.name, s]));
+
+// 界面文案双语
+const STR = {
+  zh: {aiPick:'AI 建议', match:'匹配依据：', scene:'　场景：', weak:'弱相关', cross:'名称+描述交叉命中',
+       note:'仅为建议——最终请自行选择；会话内 skill-picker 会结合你的真实上下文重新给出候选。',
+       none:'本机没有明显匹配的 skill——可以直接把需求交给 agent 正常处理。',
+       name:'名称·', desc:'描述·', body:'正文·', syn:'近义·',
+       mt:'AI 译文，原文以 SKILL.md 为准'},
+  en: {aiPick:'AI pick', match:'Matched: ', scene:'　Category: ', weak:'weak match', cross:'name+desc cross-hit',
+       note:'Suggestion only — you decide; the in-chat skill-picker re-ranks with real session context.',
+       none:'No obvious match on this machine — just describe the task to the agent directly.',
+       name:'name·', desc:'desc·', body:'body·', syn:'syn·',
+       mt:'AI-translated; the SKILL.md is the source of truth'}
+};
+let LANG = localStorage.getItem('sp-lang') || 'zh';
+const sDesc = s => (LANG === 'zh' ? s.descZh : s.descEn) || s.desc;
+const sMt = s => LANG === 'zh' ? s.mtZh : s.mtEn;
+const sCat = s => LANG === 'zh' ? s.cat : s.catEn;
+const N = SKILLS.length;
+const idf = t => DF.has(t) ? Math.log(1 + N / DF.get(t)) : 0;
+
+// 近义词/权重全部来自 R（rules.json 单源），与 Python 端同构
+const WEAK_SYN = new Set(R.weak_syn);
+
+function fieldScore(qw, fieldToks) {   // qw: [token, weight][]
+  let hitW = 0, totW = 0;
+  qw.forEach(([t, f]) => {
+    const w = Math.max(idf(t), W.idf_floor) * (t.length >= 2 ? W.len2_boost : 1) * f;
+    totW += w;
+    if (fieldToks.has(t)) hitW += w;
+  });
+  return totW ? hitW / totW : 0;
+}
+
+function expandIntent(qToks, qCompact) {  // -> [token, weight][]，含近义词（与 Python 同构）
+  const out = new Map();
+  qToks.forEach(t => { if (t.length >= 2) out.set(t, 1); });
+  for (const key of Object.keys(R.syn)) {
+    if (!qToks.has(key) && !(qCompact && qCompact.includes(key))) continue;
+    for (const syn of tokenize(R.syn[key], {query: true})) {
+      if (syn.length < 2 || out.has(syn)) continue;
+      out.set(syn, WEAK_SYN.has(syn) ? W.weak_syn : W.syn);
+    }
+  }
+  if (R.design_triggers.some(t => qToks.has(t) || (qCompact && qCompact.includes(t)))) {
+    for (const syn of R.design_fallback)
+      if (!out.has(syn)) out.set(syn, 0.3);
+  }
+  return [...out.entries()];
+}
+
+function matchedRuns(intent, text) {  // 贪心找出意图中命中 skill 文本的连续片段（长度>=2）
+  const runs = []; let i = 0;
+  while (i < intent.length) {
+    let best = 0;
+    for (let len = Math.min(12, intent.length - i); len >= 2; len--) {
+      if (text.includes(intent.slice(i, i + len))) { best = len; break; }
+    }
+    if (best >= 2) { runs.push(intent.slice(i, i + best)); i += best; } else i++;
+  }
+  return [...new Set(runs)].slice(0, 5);
+}
+
+// tabs 切换
+document.querySelectorAll('.tabbtn').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.tabbtn').forEach(x => x.classList.toggle('active', x === b));
+  document.querySelectorAll('.tabpane').forEach(p => p.classList.toggle('active', p.id === 'tab-' + b.dataset.tab));
+  if (b.dataset.tab === 'find') document.getElementById('intent').focus();
+}));
+
+const intentEl = document.getElementById('intent');
+const recoEl = document.getElementById('reco');
+const cards = [...document.querySelectorAll('.card')];
+const sections = [...document.querySelectorAll('section')];
+const sectionsBox = document.getElementById('sections');
+const originalOrder = [...sections];
+cards.forEach(c => c.addEventListener('click', e => {
+  if (e.target.closest('.copybtn')) return;   // 点复制角标不触发展开
+  c.classList.toggle('open');
+}));
+
+// 一键复制 skill 名（含 reco 面板动态节点，用事件委托）
+async function copyText(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch (err) {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); ta.remove();
+  }
+  const prev = btn.textContent;
+  btn.textContent = '✓'; btn.classList.add('ok');
+  setTimeout(() => { btn.textContent = prev; btn.classList.remove('ok'); }, 1200);
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.copybtn');
+  if (b) copyText(b.dataset.copy, b);
+});
+
+// 支持 #q=<意图> 预填：agent 弹出页面时直接带上用户意图，候选即刻呈现
+// 注意：首次调用在脚本末尾（须等 input 监听器注册完成）
+function applyHashQuery() {
+  const m = location.hash.match(/^#q=(.+)$/);
+  if (!m) return;
+  intentEl.value = decodeURIComponent(m[1]);
+  intentEl.dispatchEvent(new Event('input'));
+  intentEl.focus();
+}
+window.addEventListener('hashchange', applyHashQuery);
+
+intentEl.addEventListener('input', () => {
+  const raw = intentEl.value.trim();
+  const q = norm(stripStop(raw)) || norm(raw);       // 保留空格：英文分词依赖词边界
+  const qCompact = q.replace(/ /g, '');              // 紧凑形式只用于子串比较
+
+  // 无意图（或太短）：全部显示，恢复默认顺序
+  if (qCompact.length < 2) {
+    recoEl.className = ''; recoEl.innerHTML = '';
+    cards.forEach(c => { c.style.display = ''; });
+    sections.forEach(s => { s.style.display = ''; });
+    originalOrder.forEach(s => sectionsBox.appendChild(s));
+    document.getElementById('empty').style.display = 'none';
+    return;
+  }
+  const qToks = tokenize(q, {query: true});
+  const qw = expandIntent(qToks, q);
+  // 场景名是否被意图点名（「设计」→「设计/Figma」）：该区整体置顶（多标签全参与）
+  const catPinned = new Set(
+    [...new Set(SKILLS.flatMap(s => s.cats))].filter(cat => {
+      const cn = norm(cat).replace(/ /g, '');
+      return cn.includes(q) || [...qToks].some(t => t.length >= 2 && cn.includes(t));
+    })
+  );
+  const all = SKILLS.map(s => {
+    const ns = fieldScore(qw, s._name);              // 名称命中
+    const ds = fieldScore(qw, s._desc);              // 描述命中
+    const ks = fieldScore(qw, s._kw);                // MD 正文关键词命中
+    let score = W.name * ns + W.desc * ds + W.kw * ks;
+    if (ns > 0.08 && ds > 0.08) score *= W.cross;
+    else if (ks > 0.1 && (ns > 0.08 || ds > 0.08)) score *= W.kw_cross;
+    // 整串命中：名称强加分；描述仅当该词不常见才加，避免「设计」泛词刷分
+    const qCompact = q.replace(/ /g, '');
+    if (s._nt.replace(/ /g, '').includes(qCompact)) score += W.name_substr;
+    else if (s._dt.replace(/ /g, '').includes(qCompact)) {
+      const dfRatio = (DF.get(qCompact) || 0) / Math.max(N, 1);
+      if (dfRatio <= W.desc_substr_max_df) score += W.desc_substr;
+    }
+    if (s.cats.some(c => catPinned.has(c))) score += W.cat_pin;  // 多标签任一被点名即抬升
+    return { s, score, ns, ds };
+  });
+  const scoreMap = new Map(all.map(x => [x.s.name, x.score]));
+  const scored = all.filter(x => x.score > W.min_score).sort((a, b) => b.score - a.score).slice(0, 4);
+
+  // 过滤：纯打分 + 相对阈值。绝对线 min_score 之外，再砍掉低于第一名 30% 的长尾——
+  // 不相关的内容一律不展示（此前 "train" 会因子串误中 training/constraint 拖出无关分区）
+  const cScore = c => scoreMap.get(c.dataset.name) || 0;
+  const topScore = Math.max(...all.map(x => x.score), 0);
+  const cutoff = Math.max(W.min_score, 0.3 * topScore);
+  cards.forEach(c => {
+    c.style.display = cScore(c) >= cutoff ? '' : 'none';
+  });
+  let any = false;
+  const secBest = new Map();
+  sections.forEach(s => {
+    const vis = [...s.querySelectorAll('.card')].filter(c => c.style.display !== 'none');
+    const title = (s.querySelector('h2')?.textContent || '').replace(/（.*$/, '');
+    let best = vis.length ? Math.max(...vis.map(cScore)) : -1;
+    if (catPinned.has(title)) best += 10;            // 点名场景强制排最前
+    secBest.set(s, best);
+    s.style.display = vis.length ? '' : 'none'; any = any || vis.length > 0;
+    const grid = s.querySelector('.grid');
+    vis.sort((a, b) => cScore(b) - cScore(a)).forEach(c => grid.appendChild(c));
+  });
+  document.getElementById('empty').style.display = any ? 'none' : 'block';
+  [...sections].sort((a, b) => secBest.get(b) - secBest.get(a)).forEach(s => sectionsBox.appendChild(s));
+
+  const T = STR[LANG];
+  if (!scored.length) {
+    recoEl.className = 'show';
+    recoEl.innerHTML = '<div class="reco-card"><div class="reco-body">' + T.none + '</div></div>';
+    return;
+  }
+  const max = scored[0].score;
+  recoEl.className = 'show';
+  recoEl.innerHTML = scored.map((x, i) => {
+    const nameRuns = matchedRuns(q, x.s._nt.replace(/ /g, ''));
+    const descRuns = matchedRuns(q, x.s._dt.replace(/ /g, '')).filter(r => !nameRuns.includes(r));
+    const kwRuns = matchedRuns(q, x.s._kt.replace(/ /g, '')).filter(r => !nameRuns.includes(r) && !descRuns.includes(r)).slice(0, 3);
+    const synHits = qw.filter(([t, f]) => f < 1 && (x.s._name.has(t) || x.s._desc.has(t) || x.s._kw.has(t)))
+                      .slice(0, 4).map(([t]) => '<span class="kw">' + T.syn + t + '</span>').join('');
+    let kws = nameRuns.map(r => '<span class="kw">' + T.name + r + '</span>').join('') +
+              descRuns.map(r => '<span class="kw">' + T.desc + r + '</span>').join('') +
+              kwRuns.map(r => '<span class="kw">' + T.body + r + '</span>').join('') + synHits;
+    const cross = x.ns > 0.08 && x.ds > 0.08 ? '<span class="kw" style="color:var(--green);background:rgba(74,222,128,.1)">' + T.cross + '</span>' : '';
+    const mtNote = sMt(x.s) ? '<div class="mt-note">⟡ ' + T.mt + '</div>' : '';
+    return '<div class="reco-card' + (i === 0 ? ' best' : '') + '">' +
+      '<div class="reco-rank">' + (i + 1) + '</div><div class="reco-body">' +
+      '<div>' + (i === 0 ? '<span class="ai-badge">' + T.aiPick + '</span>' : '') +
+      '<span class="reco-name">' + x.s.name + '</span>' +
+      x.s.hosts.map(h => '<span class="badge host" style="background:' + h[1] + ';margin-right:4px">' + h[0] + '</span>').join('') +
+      (x.s.warn ? ' <span class="badge warn">⚠ ' + x.s.warn + '</span>' : '') +
+      ' <button class="copybtn" data-copy="' + x.s.name + '">⧉</button></div>' +
+      '<div class="reco-desc">' + sDesc(x.s) + '</div>' + mtNote +
+      '<div class="reco-why">' + T.match + (kws || '<span class="kw">' + T.weak + '</span>') + cross +
+      T.scene + sCat(x.s) + '</div>' +
+      '<div class="scorebar"><i style="width:' + Math.round(100 * x.score / max) + '%"></i></div>' +
+      (i === 0 ? '<div class="reco-note">' + T.note + '</div>' : '') +
+      '</div></div>';
+  }).join('');
+});
+
+// 语言切换：UI 文案 + 卡片描述 + 分类名 + 推荐面板全部跟随
+function applyLang() {
+  document.querySelectorAll('[data-zh]').forEach(el => { el.textContent = el.dataset[LANG] || el.dataset.zh; });
+  intentEl.placeholder = LANG === 'zh' ? intentEl.dataset.phZh : intentEl.dataset.phEn;
+  document.querySelectorAll('.langbtn').forEach(b => b.classList.toggle('active', b.dataset.lang === LANG));
+  cards.forEach(c => {
+    const s = byName.get(c.dataset.name);
+    if (!s) return;
+    const mt = sMt(s) ? (LANG === 'zh' ? '　⟡AI 译' : '　⟡AI-translated') : '';
+    c.querySelector('.desc').textContent = (sDesc(s) || '') + mt;
+  });
+  intentEl.dispatchEvent(new Event('input'));
+}
+document.querySelectorAll('.langbtn').forEach(b => b.addEventListener('click', () => {
+  LANG = b.dataset.lang; localStorage.setItem('sp-lang', LANG); applyLang();
+}));
+applyLang();
+
+applyHashQuery();   // input 监听器已就绪，此时消费 #q= 才能触发匹配
+</script>
+</body>
+</html>

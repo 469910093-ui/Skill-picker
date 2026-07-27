@@ -1,0 +1,431 @@
+{
+  "generated_at": "2026-07-27T06:18:41.409612+00:00",
+  "skill_count": 20,
+  "categories": {
+    "PPT/演示": [
+      "frontend-slides",
+      "guizang-ppt-skill",
+      "html-ppt",
+      "mckinsey-consultant"
+    ],
+    "写作/内容运营": [
+      "mimeng-writing"
+    ],
+    "出行/电商业务": [
+      "baidu-ai-map"
+    ],
+    "周报/复盘/数据分析": [
+      "ibu-html-weekly-overview",
+      "work-report"
+    ],
+    "图表/可视化": [
+      "chart-visualization"
+    ],
+    "视频/图像/创意": [
+      "ai-short-drama",
+      "video-use"
+    ],
+    "设计/Figma": [
+      "figma-design-to-code",
+      "figma-generate-design",
+      "figma-use"
+    ],
+    "飞书/Lark 办公": [
+      "gochina-weekly-review",
+      "lark-calendar",
+      "lark-doc"
+    ]
+  },
+  "duplicates": {
+    "same_name": [
+      {
+        "name": "chart-visualization",
+        "status": "identical",
+        "copies": [
+          {
+            "path": "~/.claude-code/skills/chart-visualization/SKILL.md",
+            "host": "claude-code",
+            "sha256": "chart-vi"
+          },
+          {
+            "path": "~/.codex/skills/chart-visualization/SKILL.md",
+            "host": "codex",
+            "sha256": "chart-vi"
+          }
+        ]
+      },
+      {
+        "name": "lark-doc",
+        "status": "identical",
+        "copies": [
+          {
+            "path": "~/.claude-code/skills/lark-doc/SKILL.md",
+            "host": "claude-code",
+            "sha256": "lark-doc"
+          },
+          {
+            "path": "~/.cursor/skills/lark-doc/SKILL.md",
+            "host": "cursor",
+            "sha256": "lark-doc"
+          }
+        ]
+      },
+      {
+        "name": "work-report",
+        "status": "drifted",
+        "copies": [
+          {
+            "path": "~/.claude-code/skills/work-report/SKILL.md",
+            "host": "claude-code",
+            "sha256": "work-rep"
+          },
+          {
+            "path": "~/.cursor/skills/work-report/SKILL.md",
+            "host": "cursor",
+            "sha256": "drift001"
+          }
+        ]
+      }
+    ],
+    "overlapping": []
+  },
+  "skills": [
+    {
+      "name": "figma-generate-design",
+      "dir_name": "figma-generate-design",
+      "description": "Use this skill alongside figma-use when the task involves translating an application page, view, or multi-section layout into Figma. Triggers: write to Figma, create in Figma from code, build a landing page in Figma, mockup.",
+      "keywords": "figma design system components variables import assemble",
+      "category": "设计/Figma",
+      "categories": [
+        "设计/Figma",
+        "Agent/开发工具链"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/figma-generate-design/SKILL.md",
+      "sha256": "figma-ge",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "figma-design-to-code",
+      "dir_name": "figma-design-to-code",
+      "description": "MANDATORY prerequisite before get_design_context. Trigger whenever the user wants to implement, build, port, or code up a Figma design as code.",
+      "keywords": "figma get_design_context screenshot code connect tokens",
+      "category": "设计/Figma",
+      "categories": [
+        "设计/Figma",
+        "Agent/开发工具链",
+        "出行/电商业务"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/figma-design-to-code/SKILL.md",
+      "sha256": "figma-de",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "figma-use",
+      "dir_name": "figma-use",
+      "description": "MANDATORY prerequisite before every use_figma tool call. Trigger for write actions in the Figma file context: create edit delete nodes, variables, components and variants, auto-layout, fills.",
+      "keywords": "figma plugin api variables components variants",
+      "category": "设计/Figma",
+      "categories": [
+        "设计/Figma",
+        "Agent/开发工具链",
+        "出行/电商业务"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/figma-use/SKILL.md",
+      "sha256": "figma-us",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "video-use",
+      "dir_name": "video-use",
+      "description": "Edit any video by conversation. Transcribe, cut, color grade, generate overlay animations, burn subtitles - for talking heads, montages, tutorials, travel, interviews. No presets, no menus.",
+      "keywords": "video edit cut transcribe subtitles ffmpeg color grade",
+      "category": "视频/图像/创意",
+      "categories": [
+        "视频/图像/创意",
+        "Agent/开发工具链",
+        "出行/电商业务"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/video-use/SKILL.md",
+      "sha256": "video-us",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "work-report",
+      "dir_name": "work-report",
+      "description": "扫描本地工作目录，自动发现项目并汇总近期工作记录，生成结构化的中文工作汇报。当用户需要总结近期工作、生成工作汇报、准备周报/日报/月报时使用此 skill。",
+      "keywords": "工作汇报 周报 日报 月报 扫描 项目",
+      "category": "周报/复盘/数据分析",
+      "categories": [
+        "周报/复盘/数据分析",
+        "Agent/开发工具链"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/work-report/SKILL.md",
+      "sha256": "work-rep",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "ibu-html-weekly-overview",
+      "dir_name": "ibu-html-weekly-overview",
+      "description": "通用周报 HTML 总览生成能力：读取任意周报文档，自动提炼每个项目的进展卡点风险待办四象限，产出单文件交互式 HTML。当用户提到周报 HTML、一屏看完周报时使用。",
+      "keywords": "周报 HTML 四象限 卡片 图表",
+      "category": "周报/复盘/数据分析",
+      "categories": [
+        "周报/复盘/数据分析"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/ibu-html-weekly-overview/SKILL.md",
+      "sha256": "ibu-html",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "lark-doc",
+      "dir_name": "lark-doc",
+      "description": "飞书云文档（Docx / Wiki 文档）：读取和编辑飞书文档内容。当用户给出文档 URL 或 token，或需要查看、创建、编辑文档、插入或下载文档图片附件时使用。",
+      "keywords": "飞书 文档 docx wiki token 编辑",
+      "category": "飞书/Lark 办公",
+      "categories": [
+        "飞书/Lark 办公",
+        "视频/图像/创意"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/lark-doc/SKILL.md",
+      "sha256": "lark-doc",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "html-ppt",
+      "dir_name": "html-ppt",
+      "description": "HTML PPT Studio - author professional static HTML presentations in many styles. Use when the user asks for a presentation, PPT, slides, keynote, deck, slideshow, 幻灯片, 演讲稿, 做一份 PPT.",
+      "keywords": "ppt slides presentation deck 幻灯片 模板",
+      "category": "PPT/演示",
+      "categories": [
+        "PPT/演示",
+        "Agent/开发工具链"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/html-ppt/SKILL.md",
+      "sha256": "html-ppt",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "guizang-ppt-skill",
+      "dir_name": "guizang-ppt-skill",
+      "description": "生成横向翻页网页 PPT（单 HTML 文件），含 WebGL 背景、章节幕封、数据大字报、图片网格等模板。当用户需要制作分享 / 演讲 / 发布会风格的网页 PPT 时使用。",
+      "keywords": "PPT 翻页 WebGL 模板 杂志风 瑞士风",
+      "category": "PPT/演示",
+      "categories": [
+        "PPT/演示",
+        "视频/图像/创意",
+        "Agent/开发工具链"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/guizang-ppt-skill/SKILL.md",
+      "sha256": "guizang-",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "chart-visualization",
+      "dir_name": "chart-visualization",
+      "description": "将数据可视化为图表。当用户需要生成柱状图、折线图、饼图、散点图、雷达图、桑基图、思维导图、流程图等图表时调用此技能，通过 curl 工具调用 AntV API 生成图表图片。",
+      "keywords": "图表 柱状图 折线图 饼图 AntV 可视化",
+      "category": "图表/可视化",
+      "categories": [
+        "图表/可视化",
+        "视频/图像/创意"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/chart-visualization/SKILL.md",
+      "sha256": "chart-vi",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "gochina-weekly-review",
+      "dir_name": "gochina-weekly-review",
+      "description": "GOCHINA 五产线周度经营复盘（飞书 DocxXML）：看板对齐、数据驱动 callout、AntV 结论图、QA 门禁与一键编排。Use when the user mentions GOCHINA 复盘、周复盘。",
+      "keywords": "复盘 周报 GOCHINA 飞书 QA",
+      "category": "飞书/Lark 办公",
+      "categories": [
+        "飞书/Lark 办公",
+        "周报/复盘/数据分析",
+        "图表/可视化"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/gochina-weekly-review/SKILL.md",
+      "sha256": "gochina-",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "mckinsey-consultant",
+      "dir_name": "mckinsey-consultant",
+      "description": "McKinsey顾问式问题解决系统。从商业问题出发,通过假设驱动的结构化分析方法,生成McKinsey风格研究报告和PPT。融合MECE原则、Issue Tree拆解、Dummy Page设计。",
+      "keywords": "McKinsey PPT 分析 报告 设计",
+      "category": "PPT/演示",
+      "categories": [
+        "PPT/演示"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/mckinsey-consultant/SKILL.md",
+      "sha256": "mckinsey",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "baidu-ai-map",
+      "dir_name": "baidu-ai-map",
+      "description": "百度地图 Agent Plan，无需成为百度地图开发者，立即接入百度地图为 Agent 场景原生设计的地图能力，例如 AI 地点检索、AI 路线规划、地理编码等。",
+      "keywords": "百度地图 API 路线规划 地理编码",
+      "category": "出行/电商业务",
+      "categories": [
+        "出行/电商业务"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/baidu-ai-map/SKILL.md",
+      "sha256": "baidu-ai",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "ai-short-drama",
+      "dir_name": "ai-short-drama",
+      "description": "精细化 AI 短剧 IP 创作技能。三阶段架构：剧本+ref图、分镜图（视频首帧）、出片。用户提到短剧、微短剧、竖屏剧、AI 短剧、分镜、出片时触发。",
+      "keywords": "短剧 分镜 视频 出片 剧本 设计",
+      "category": "视频/图像/创意",
+      "categories": [
+        "视频/图像/创意"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/ai-short-drama/SKILL.md",
+      "sha256": "ai-short",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "mimeng-writing",
+      "dir_name": "mimeng-writing",
+      "description": "咪蒙爆款文章写作技巧。适用于需要创作10万+阅读量爆款文章、情感共鸣类内容、故事叙事或社会议题评论时使用。掌握标题制造、开篇设计、情绪调动等核心技巧。",
+      "keywords": "爆款 文章 标题 开篇设计 金句",
+      "category": "写作/内容运营",
+      "categories": [
+        "写作/内容运营"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/mimeng-writing/SKILL.md",
+      "sha256": "mimeng-w",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "lark-calendar",
+      "dir_name": "lark-calendar",
+      "description": "飞书日历：管理日历日程和会议室。查看/搜索日程、创建/更新日程、查询忙闲、预定会议室。不负责查询过去的视频会议记录。",
+      "keywords": "飞书 日历 日程 会议室",
+      "category": "飞书/Lark 办公",
+      "categories": [
+        "飞书/Lark 办公"
+      ],
+      "host": "claude-code",
+      "path": "~/.claude-code/skills/lark-calendar/SKILL.md",
+      "sha256": "lark-cal",
+      "root": "~/.claude-code/skills"
+    },
+    {
+      "name": "work-report",
+      "dir_name": "work-report",
+      "description": "Generate weekly work reports from local git history. Slightly different copy from the Claude version — demo drift.",
+      "keywords": "weekly report git summary",
+      "category": "周报/复盘/数据分析",
+      "categories": [
+        "周报/复盘/数据分析",
+        "出行/电商业务"
+      ],
+      "host": "cursor",
+      "path": "~/.cursor/skills/work-report/SKILL.md",
+      "root": "~/.cursor/skills",
+      "sha256": "drift001"
+    },
+    {
+      "name": "frontend-slides",
+      "dir_name": "frontend-slides",
+      "description": "Build beautiful HTML slide decks for product launches and tech talks. Use when the user asks for slides, PPT, deck, 幻灯片.",
+      "keywords": "ppt slides deck presentation 幻灯片",
+      "category": "PPT/演示",
+      "categories": [
+        "PPT/演示",
+        "Agent/开发工具链"
+      ],
+      "host": "cursor-plugin",
+      "path": "~/.cursor/plugins/cache/frontend-slides/SKILL.md",
+      "root": "~/.cursor/plugins/cache",
+      "sha256": "overlap01"
+    },
+    {
+      "name": "lark-doc",
+      "dir_name": "lark-doc",
+      "description": "飞书云文档（Docx / Wiki 文档）：读取和编辑飞书文档内容。当用户给出文档 URL 或 token，或需要查看、创建、编辑文档、插入或下载文档图片附件时使用。",
+      "keywords": "飞书 文档 docx wiki token 编辑",
+      "category": "飞书/Lark 办公",
+      "categories": [
+        "飞书/Lark 办公",
+        "视频/图像/创意"
+      ],
+      "host": "cursor",
+      "path": "~/.cursor/skills/lark-doc/SKILL.md",
+      "sha256": "lark-doc",
+      "root": "~/.cursor/skills"
+    },
+    {
+      "name": "chart-visualization",
+      "dir_name": "chart-visualization",
+      "description": "将数据可视化为图表。当用户需要生成柱状图、折线图、饼图、散点图、雷达图、桑基图、思维导图、流程图等图表时调用此技能，通过 curl 工具调用 AntV API 生成图表图片。",
+      "keywords": "图表 柱状图 折线图 饼图 AntV 可视化",
+      "category": "图表/可视化",
+      "categories": [
+        "图表/可视化",
+        "视频/图像/创意"
+      ],
+      "host": "codex",
+      "path": "~/.codex/skills/chart-visualization/SKILL.md",
+      "sha256": "chart-vi",
+      "root": "~/.codex/skills"
+    }
+  ],
+  "gates": [
+    {
+      "id": "G1",
+      "name": "覆盖率",
+      "status": "pass",
+      "detail": "Demo catalog：合成数据，覆盖率门禁跳过",
+      "items": [],
+      "action": ""
+    },
+    {
+      "id": "G2",
+      "name": "解析质量",
+      "status": "pass",
+      "detail": "全部 skill 均有有效描述",
+      "items": [],
+      "action": ""
+    },
+    {
+      "id": "G3",
+      "name": "漂移提醒",
+      "status": "warn",
+      "detail": "发现同名漂移（演示用）",
+      "items": [
+        "work-report"
+      ],
+      "action": "打开「理技能」tab 查看，自行决定是否合并"
+    },
+    {
+      "id": "G4",
+      "name": "匹配黄金用例",
+      "status": "pass",
+      "detail": "Demo 环境：黄金用例由真实 install 校验",
+      "items": [],
+      "action": ""
+    }
+  ],
+  "_demo": true,
+  "_note": "Synthetic fixture data for public demo. Not from any real machine."
+}
