@@ -180,8 +180,11 @@ class McpServer:
             "dashboard_url": dash.get("url") or "",
             "dashboard_fallback_file": dash.get("fallback_file") or str(DASHBOARD_HTML),
             "agent_must": DASHBOARD_AGENT_MUST,
-            "note": ("" if results else "本机没有匹配的 skill，不要硬凑。")
-                    + " 必须先打开 dashboard_url 再向用户展示候选。",
+            "note": (
+                "" if results else
+                "本机没有匹配的 skill，不要硬凑。可引导用户打开看板「去 GitHub 发现」子页"
+                "（skill-feed lite，无关注/发布），自行去 GitHub 安装后再 scan。"
+            ) + " 必须先打开 dashboard_url 再向用户展示候选。",
         }
 
     @staticmethod

@@ -30,8 +30,8 @@ CATALOG_JSON = DATA_DIR / "catalog.json"
 CATALOG_MD = DATA_DIR / "catalog.md"
 CONFIG_JSON = DATA_DIR / "config.json"
 SELF_NAME = "skill-picker"
-TOOL_FILES = ["skillpick.py", "matching.py", "dashboard.py", "rules.json", "translations.json",
-              "mcp_server.py"]
+TOOL_FILES = ["skillpick.py", "matching.py", "dashboard.py", "discover.py", "rules.json",
+              "translations.json", "mcp_server.py"]
 MCP_SERVER_NAME = "skill-picker"
 
 # 扫描根目录 -> 宿主标签。存在才扫，不存在跳过。
@@ -708,6 +708,15 @@ def cmd_scan() -> dict:
     CATALOG_JSON.write_text(json.dumps(catalog, ensure_ascii=False, indent=2), encoding="utf-8")
     write_catalog_md(catalog)
     try:
+        from discover import sync_discover_page
+        disc = sync_discover_page()
+        if disc:
+            print(f"[scan] discover 子页已同步 {disc}")
+        else:
+            print("[scan] discover 子页未就绪（可选：先跑 skill-feed refresh，或使用公开 embed）")
+    except Exception as e:
+        print(f"[scan] discover 同步跳过：{e}")
+    try:
         from dashboard import build_dashboard
         print(f"[scan] dashboard 已写入 {build_dashboard()}")
     except ImportError:
@@ -790,6 +799,7 @@ def cmd_match(argv: list[str]) -> None:
           f"{dash_payload['dashboard_url'] or dash_payload['dashboard_fallback_file']}")
     if not results:
         print(f"[match] 「{query}」没有匹配的 skill")
+        print("[match] 可打开看板「去 GitHub 发现」子页找远程 skill（自行安装后再 scan）")
         return
     for rank, r in enumerate(results, 1):
         hosts = "/".join(r["hosts"])

@@ -97,8 +97,32 @@ PAGE = """<!DOCTYPE html>
   .tabbtn.active { color: var(--text); border-bottom-color: var(--blue); }
   .tabbtn .n { font-size: 11.5px; color: var(--faint); margin-left: 6px; }
   .tabbtn.t2.active { border-bottom-color: var(--red); }
+  .tabbtn.t3.active { border-bottom-color: var(--green); }
   .tabpane { display: none; }
   .tabpane.active { display: block; }
+  #tab-discover.active { display: flex; flex-direction: column; min-height: 70vh; }
+  .discover-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    margin-bottom: 12px; color: var(--dim); font-size: 13px;
+  }
+  .discover-bar b { color: var(--text); }
+  .discover-cta, .discover-open {
+    appearance: none; border: 1px solid rgba(74,222,128,.45); background: rgba(74,222,128,.12);
+    color: var(--green); border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 12.5px;
+    font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center;
+  }
+  .discover-cta:hover, .discover-open:hover { background: rgba(74,222,128,.2); }
+  .discover-frame-wrap {
+    flex: 1; min-height: 640px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+    background: #efefef;
+  }
+  .discover-frame-wrap iframe { width: 100%; height: min(82vh, 900px); border: 0; display: block; }
+  .discover-fallback {
+    padding: 28px 20px; color: var(--dim); font-size: 13.5px; line-height: 1.55; max-width: 560px;
+  }
+  .discover-fallback code { color: var(--blue); font-size: 12px; }
+  .empty-actions { margin-top: 14px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .reco-card .discover-cta { margin-top: 10px; }
 
   /* 意图输入 */
   .intent-wrap { margin-bottom: 30px; }
@@ -171,6 +195,7 @@ PAGE = """<!DOCTYPE html>
           font-family: Consolas, monospace; display: none; }
   .card.open .path { display: block; }
   .empty { color: var(--faint); padding: 40px 0; text-align: center; display: none; }
+  .empty .empty-title { color: var(--text); font-size: 16px; font-weight: 700; margin-bottom: 6px; }
 </style>
 </head>
 <body>
@@ -188,6 +213,7 @@ PAGE = """<!DOCTYPE html>
 <div class="tabs">
   <button class="tabbtn active" data-tab="find">🔍 <span data-zh="找技能" data-en="Find"></span><span class="n" data-zh="意图匹配 · AI 建议" data-en="intent match · AI pick"></span></button>
   <button class="tabbtn t2" data-tab="tidy">🩺 <span data-zh="理技能" data-en="Tidy"></span><span class="n" data-zh="相似/漂移自查 · __NCLUSTER__ 组" data-en="similarity/drift check · __NCLUSTER__ groups"></span></button>
+  <button class="tabbtn t3" data-tab="discover">🌐 <span data-zh="去 GitHub 发现" data-en="Discover on GitHub"></span><span class="n" data-zh="本机无解时" data-en="when local miss"></span></button>
 </div>
 
 <div class="tabpane active" id="tab-find">
@@ -196,12 +222,19 @@ PAGE = """<!DOCTYPE html>
            data-ph-zh="输入你的意图，比如：我要做一份周报 / 帮我画个图表 / 写飞书文档…"
            data-ph-en="Describe your intent, e.g. make a weekly report / draw a chart / edit a video…">
     <div class="intent-hint"
-         data-zh="会话唤起时会自动填入你的意图并展示候选，无需再手输；也可在此继续改。"
-         data-en="When opened from chat, your intent is prefilled automatically — no retyping. You can still edit it here."></div>
+         data-zh="会话唤起时会自动填入你的意图并展示候选，无需再手输；也可在此继续改。本机没有匹配时，可切到「去 GitHub 发现」。"
+         data-en="When opened from chat, your intent is prefilled. If nothing matches locally, open Discover on GitHub."></div>
     <div id="reco"></div>
   </div>
   <div id="sections">__SECTIONS__</div>
-  <div class="empty" id="empty" data-zh="没有匹配的 skill" data-en="No matching skill"></div>
+  <div class="empty" id="empty">
+    <div class="empty-title" data-zh="本机没有匹配的 skill" data-en="No matching skill on this machine"></div>
+    <div data-zh="可以把需求直接交给 agent，或去 GitHub 发现远程 skill（自行安装后再 scan）。"
+         data-en="Ask the agent directly, or discover remote skills on GitHub (install yourself, then scan)."></div>
+    <div class="empty-actions">
+      <button type="button" class="discover-cta" id="emptyDiscover">🌐 <span data-zh="去 GitHub 发现" data-en="Discover on GitHub"></span></button>
+    </div>
+  </div>
 </div>
 
 <div class="tabpane" id="tab-tidy">
@@ -213,10 +246,32 @@ PAGE = """<!DOCTYPE html>
   </div>
 </div>
 
+<div class="tabpane" id="tab-discover">
+  <div class="discover-bar">
+    <span data-zh="本机 catalog 无解时，在此浏览远程线索 → 打开 GitHub 自行安装。无关注 / 无发布 / 无个人后台。"
+          data-en="When local catalog misses, browse remote leads here → open GitHub to install yourself. No follow / publish / account."></span>
+    <a class="discover-open" id="discoverOpenNew" href="__DISCOVER_HREF__" target="_blank" rel="noopener">↗ <span data-zh="新窗口打开" data-en="Open in new window"></span></a>
+  </div>
+  <div class="discover-frame-wrap" id="discoverFrameWrap">
+    <iframe id="discoverFrame" title="skill-feed lite" src="about:blank"></iframe>
+  </div>
+  <div class="discover-fallback" id="discoverFallback" style="display:none">
+    <p data-zh="尚未同步发现页。请先在本机准备 skill-feed 数据，再重新 scan："
+       data-en="Discover page not synced yet. Prepare skill-feed data, then scan again:"></p>
+    <p><code>cd skill-feed && python skillfeed.py refresh</code></p>
+    <p><code>python skillpick.py scan</code></p>
+    <p style="margin-top:12px"><a class="discover-open" href="__PUBLIC_EMBED__" target="_blank" rel="noopener"
+         data-zh="或直接打开公开发现页 →" data-en="Or open the public discover page →"></a></p>
+  </div>
+</div>
+
 <script>
 const SKILLS = __DATA__;
 const R = __RULES__;   // 单一真相源 rules.json（与 Python matching.py 共用）
 const W = R.weights;
+const DISCOVER_READY = __DISCOVER_READY__;
+const DISCOVER_HREF = __DISCOVER_HREF_JSON__;
+const PUBLIC_EMBED = __PUBLIC_EMBED_JSON__;
 const stripStop = s => { R.stopwords.forEach(w => { s = s.split(w).join(''); }); return s; };
 const norm = s => s.toLowerCase().replace(/[^a-z0-9\\u4e00-\\u9fff]+/g, ' ').replace(/\\s+/g, ' ').trim();
 const isCJK = ch => ch >= '\\u4e00' && ch <= '\\u9fff';
@@ -258,12 +313,14 @@ const byName = new Map(SKILLS.map(s => [s.name, s]));
 const STR = {
   zh: {aiPick:'AI 建议', match:'匹配依据：', scene:'　场景：', weak:'弱相关', cross:'名称+描述交叉命中',
        note:'仅为建议——最终请自行选择；会话内 skill-picker 会结合你的真实上下文重新给出候选。',
-       none:'本机没有明显匹配的 skill——可以直接把需求交给 agent 正常处理。',
+       none:'本机没有明显匹配的 skill——可以直接交给 agent，或去 GitHub 发现远程 skill。',
+       goDiscover:'去 GitHub 发现',
        name:'名称·', desc:'描述·', body:'正文·', syn:'近义·',
        mt:'AI 译文，原文以 SKILL.md 为准'},
   en: {aiPick:'AI pick', match:'Matched: ', scene:'　Category: ', weak:'weak match', cross:'name+desc cross-hit',
        note:'Suggestion only — you decide; the in-chat skill-picker re-ranks with real session context.',
-       none:'No obvious match on this machine — just describe the task to the agent directly.',
+       none:'No obvious local match — ask the agent, or discover remote skills on GitHub.',
+       goDiscover:'Discover on GitHub',
        name:'name·', desc:'desc·', body:'body·', syn:'syn·',
        mt:'AI-translated; the SKILL.md is the source of truth'}
 };
@@ -316,12 +373,48 @@ function matchedRuns(intent, text) {  // 贪心找出意图中命中 skill 文�
   return [...new Set(runs)].slice(0, 5);
 }
 
+function discoverSrc(intent) {
+  const q = (intent || '').trim();
+  const base = DISCOVER_READY ? DISCOVER_HREF.split('?')[0] : PUBLIC_EMBED;
+  return q ? (base + '?q=' + encodeURIComponent(q)) : base;
+}
+
+function openDiscoverTab() {
+  const btn = document.querySelector('.tabbtn[data-tab="discover"]');
+  if (btn) btn.click();
+}
+
+function loadDiscoverFrame() {
+  const frame = document.getElementById('discoverFrame');
+  const wrap = document.getElementById('discoverFrameWrap');
+  const fallback = document.getElementById('discoverFallback');
+  const openNew = document.getElementById('discoverOpenNew');
+  const intent = document.getElementById('intent');
+  const src = discoverSrc(intent ? intent.value : '');
+  if (openNew) openNew.href = src;
+  if (!DISCOVER_READY && !PUBLIC_EMBED) {
+    wrap.style.display = 'none';
+    fallback.style.display = 'block';
+    return;
+  }
+  // 本机无 discover.html 时仍可用公开 embed；file:// 下 iframe 跨域可能被拦，提供新窗口
+  wrap.style.display = '';
+  fallback.style.display = DISCOVER_READY ? 'none' : 'block';
+  if (frame.getAttribute('data-src') !== src) {
+    frame.setAttribute('data-src', src);
+    frame.src = src;
+  }
+}
+
 // tabs 切换
 document.querySelectorAll('.tabbtn').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('.tabbtn').forEach(x => x.classList.toggle('active', x === b));
   document.querySelectorAll('.tabpane').forEach(p => p.classList.toggle('active', p.id === 'tab-' + b.dataset.tab));
   if (b.dataset.tab === 'find') document.getElementById('intent').focus();
+  if (b.dataset.tab === 'discover') loadDiscoverFrame();
 }));
+
+document.getElementById('emptyDiscover').addEventListener('click', openDiscoverTab);
 
 const intentEl = document.getElementById('intent');
 const recoEl = document.getElementById('reco');
@@ -470,7 +563,10 @@ intentEl.addEventListener('input', () => {
   const T = STR[LANG];
   if (!scored.length) {
     recoEl.className = 'show';
-    recoEl.innerHTML = '<div class="reco-card"><div class="reco-body">' + T.none + '</div></div>';
+    recoEl.innerHTML = '<div class="reco-card"><div class="reco-body">' + T.none +
+      '<div><button type="button" class="discover-cta js-go-discover">🌐 ' + T.goDiscover + '</button></div>' +
+      '</div></div>';
+    recoEl.querySelector('.js-go-discover')?.addEventListener('click', openDiscoverTab);
     return;
   }
   const max = scored[0].score;
@@ -598,6 +694,20 @@ def build_dashboard() -> Path:
     rules = matching.load_rules()
     drifted, overlap = _warn_maps(catalog)
     clusters = _union_find_clusters(catalog)
+
+    discover_ready = False
+    discover_href = "https://469910093-ui.github.io/skillfeed/embed.html"
+    public_embed = discover_href
+    try:
+        from discover import PUBLIC_EMBED, sync_discover_page
+
+        public_embed = PUBLIC_EMBED
+        synced = sync_discover_page()
+        if synced and synced.exists():
+            discover_ready = True
+            discover_href = "discover.html"
+    except Exception:
+        pass
     # 合并逻辑复用共享引擎，展示层只补充 drift/overlap 标记
     merged = matching.merge_copies(skills)
     for m in merged:
@@ -745,7 +855,12 @@ def build_dashboard() -> Path:
                          '<div style="color:var(--dim)">未发现相似或漂移的 skills。</div>')
                 .replace("__SECTIONS__", "".join(sections))
                 .replace("__DATA__", data_json)
-                .replace("__RULES__", rules_json))
+                .replace("__RULES__", rules_json)
+                .replace("__DISCOVER_READY__", "true" if discover_ready else "false")
+                .replace("__DISCOVER_HREF__", html.escape(discover_href, quote=True))
+                .replace("__DISCOVER_HREF_JSON__", json.dumps(discover_href))
+                .replace("__PUBLIC_EMBED__", html.escape(public_embed, quote=True))
+                .replace("__PUBLIC_EMBED_JSON__", json.dumps(public_embed)))
     DASHBOARD_HTML.write_text(page, encoding="utf-8")
     return DASHBOARD_HTML
 

@@ -93,8 +93,11 @@ rules.json ──── 近义词 / 权重 / 分类 / 黄金用例（唯一可�
 
 ## 相关：从 GitHub 发现新 skill
 
-skill-picker **只索引本机已装 skills**（100% 本地，不联网）。  
-若要从 GitHub / HelloGitHub 发现远程 skill，请用拆出来的兄弟产品 **skill-feed**（无限下滑 Feed + 门禁 + 打开 GitHub；**不代装**。你自行安装后再跑本工具的 `scan`）。
+skill-picker **只索引本机已装 skills**（找技能 / 理技能 100% 本地）。  
+
+当意图在本机 **没有匹配** 时，看板第三 tab **「去 GitHub 发现」** 会嵌入 skill-feed 的 **lite** 子页（无关注、无发布、无个人后台）——浏览远程线索 → **打开 GitHub** 自行安装 → 再 `scan`。  
+
+完整网页产品（Stories/关注/UGC）见兄弟仓库 **skill-feed** 的 `publish-site`（`site/index.html`）。
 
 ## 文档
 
