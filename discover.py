@@ -26,9 +26,57 @@ _SIBLING_FEED = [
 ]
 
 
+def compress_intent_query(intent: str, max_keys: int = 3) -> str:
+    """长意图压成短关键词，避免 discover 搜索框被长句占满。"""
+    src = (intent or "").strip()
+    if not src:
+        return ""
+    compact = "".join(src.lower().split())
+    if len(compact) <= 12 and len(src.split()) <= 3:
+        return src
+
+    phrases = [
+        "去ai味", "ai味", "stop-slop", "周报复盘", "周报", "复盘", "剪视频",
+        "短视频", "去ai", "文案", "写作", "润色", "飞书", "figma", "图表", "ppt",
+    ]
+    stop = set("的了呢吗啊把被在是有我要帮做一份一个能否可以怎么如何请帮忙去掉删除去除一下")
+    keys: list[str] = []
+
+    def push(k: str) -> None:
+        t = (k or "").strip()
+        if len(t) < 2:
+            return
+        if any(t == x or t in x or x in t for x in keys):
+            return
+        keys.append(t)
+
+    for p in phrases:
+        if p in compact:
+            push("去AI味" if p in ("去ai味", "ai味", "去ai") else p)
+
+    if "文案" in compact and ("ai" in compact or "味" in compact):
+        push("去AI味")
+        push("文案")
+
+    import re
+
+    for w in re.findall(r"[a-z][a-z0-9\-]{1,24}", src.lower()):
+        if w not in {"the", "and", "for", "with", "skill", "skills"}:
+            push(w)
+
+    cjk = "".join(ch for ch in compact if "\u4e00" <= ch <= "\u9fff" and ch not in stop)
+    if len(keys) < max_keys and cjk:
+        for i in range(0, max(0, len(cjk) - 1)):
+            push(cjk[i : i + 2])
+            if len(keys) >= max_keys:
+                break
+
+    return " ".join(keys[:max_keys]) if keys else compact[:8]
+
+
 def discover_url(intent: str = "") -> str:
     """相对看板的 discover 路径，或公开 embed 回退。"""
-    q = (intent or "").strip()
+    q = compress_intent_query(intent)
     suffix = ("?q=" + quote(q)) if q else ""
     if DISCOVER_HTML.exists():
         return "discover.html" + suffix

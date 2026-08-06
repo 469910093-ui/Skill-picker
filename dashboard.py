@@ -373,8 +373,28 @@ function matchedRuns(intent, text) {  // 贪心找出意图中命中 skill 文�
   return [...new Set(runs)].slice(0, 5);
 }
 
+function compressDiscoverQuery(intent) {
+  const src = (intent || '').trim();
+  if (!src) return '';
+  const compact = src.toLowerCase().replace(/\\s+/g, '');
+  if (compact.length <= 12 && src.split(/\\s+/).length <= 3) return src;
+  const phrases = ['去ai味','ai味','stop-slop','周报','复盘','剪视频','文案','写作','润色','飞书','figma'];
+  const keys = [];
+  const push = (k) => {
+    const t = (k || '').trim();
+    if (t.length < 2 || keys.some(x => x === t || x.includes(t) || t.includes(x))) return;
+    keys.push(t);
+  };
+  for (const p of phrases) if (compact.includes(p)) push(p === 'ai味' || p === '去ai味' ? '去AI味' : p);
+  if (compact.includes('文案') && (compact.includes('ai') || compact.includes('味'))) { push('去AI味'); push('文案'); }
+  const stop = new Set('的了呢吗啊把被在是有我要帮做一份一个能否可以怎么如何请'.split(''));
+  const cjk = [...compact].filter(ch => /[\\u4e00-\\u9fff]/.test(ch) && !stop.has(ch)).join('');
+  for (let i = 0; i + 1 < cjk.length && keys.length < 3; i++) push(cjk.slice(i, i + 2));
+  return (keys.slice(0, 3).join(' ') || compact.slice(0, 8));
+}
+
 function discoverSrc(intent) {
-  const q = (intent || '').trim();
+  const q = compressDiscoverQuery(intent);
   const base = DISCOVER_READY ? DISCOVER_HREF.split('?')[0] : PUBLIC_EMBED;
   return q ? (base + '?q=' + encodeURIComponent(q)) : base;
 }
