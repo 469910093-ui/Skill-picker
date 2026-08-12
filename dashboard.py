@@ -213,7 +213,7 @@ PAGE = """<!DOCTYPE html>
 <div class="tabs">
   <button class="tabbtn active" data-tab="find">🔍 <span data-zh="找技能" data-en="Find"></span><span class="n" data-zh="意图匹配 · AI 建议" data-en="intent match · AI pick"></span></button>
   <button class="tabbtn t2" data-tab="tidy">🩺 <span data-zh="理技能" data-en="Tidy"></span><span class="n" data-zh="相似/漂移自查 · __NCLUSTER__ 组" data-en="similarity/drift check · __NCLUSTER__ groups"></span></button>
-  <button class="tabbtn t3" data-tab="discover">🌐 <span data-zh="去 GitHub 发现" data-en="Discover on GitHub"></span><span class="n" data-zh="本机无解时" data-en="when local miss"></span></button>
+  <button class="tabbtn t3" data-tab="discover">🌐 <span data-zh="去 GitHub 发现" data-en="Discover on GitHub"></span><span class="n" data-zh="Feeds · 本机无解时" data-en="Feeds · when local miss"></span></button>
 </div>
 
 <div class="tabpane active" id="tab-find">
@@ -248,8 +248,8 @@ PAGE = """<!DOCTYPE html>
 
 <div class="tabpane" id="tab-discover">
   <div class="discover-bar">
-    <span data-zh="本机 catalog 无解时，在此浏览远程线索 → 打开 GitHub 自行安装。无关注 / 无发布 / 无个人后台。"
-          data-en="When local catalog misses, browse remote leads here → open GitHub to install yourself. No follow / publish / account."></span>
+    <span data-zh="Feeds：本机 catalog 无解时，用≤2 个短关键词浏览远程线索 → 打开 GitHub 自行安装。无关注 / 无发布 / 无个人后台。"
+          data-en="Feeds: when local catalog misses, browse with ≤2 short keywords → open GitHub to install yourself. No follow / publish / account."></span>
     <a class="discover-open" id="discoverOpenNew" href="__DISCOVER_HREF__" target="_blank" rel="noopener">↗ <span data-zh="新窗口打开" data-en="Open in new window"></span></a>
   </div>
   <div class="discover-frame-wrap" id="discoverFrameWrap">
@@ -374,29 +374,62 @@ function matchedRuns(intent, text) {  // 贪心找出意图中命中 skill 文�
 }
 
 function compressDiscoverQuery(intent) {
+  // 与 discover.compress_intent_query 对齐：最多 2 个短关键词
   const src = (intent || '').trim();
   if (!src) return '';
   const compact = src.toLowerCase().replace(/\\s+/g, '');
-  if (compact.length <= 12 && src.split(/\\s+/).length <= 3) return src;
-  const phrases = ['去ai味','ai味','stop-slop','周报','复盘','剪视频','文案','写作','润色','飞书','figma'];
+  const parts = src.split(/\\s+/).filter(Boolean);
+  const cjkN = [...compact].filter(ch => /[\\u4e00-\\u9fff]/.test(ch)).length;
+  if (parts.length <= 2 && compact.length <= 12 && cjkN <= 6) return parts.slice(0, 2).join(' ');
+  const phrases = [
+    ['去ai味','去AI味'],['ai味','去AI味'],['stop-slop','stop-slop'],['周报复盘','周报'],
+    ['产品设计','产品设计'],['交互设计','交互设计'],['跟团选品','选品'],['选品工具','选品'],
+    ['剪视频','剪视频'],['短视频','短视频'],['周报','周报'],['复盘','复盘'],['文案','文案'],
+    ['写作','写作'],['润色','润色'],['飞书','飞书'],['figma','figma'],['选品','选品'],
+    ['跟团','选品'],['设计','设计'],['图表','图表'],['ppt','ppt'],['mcp','mcp'],['看板','看板']
+  ].sort((a,b) => b[0].length - a[0].length);
   const keys = [];
   const push = (k) => {
     const t = (k || '').trim();
-    if (t.length < 2 || keys.some(x => x === t || x.includes(t) || t.includes(x))) return;
+    if (t.length < 2 || keys.length >= 2) return;
+    if (keys.some(x => x.toLowerCase() === t.toLowerCase() || x.toLowerCase().includes(t.toLowerCase()) || t.toLowerCase().includes(x.toLowerCase()))) return;
     keys.push(t);
   };
-  for (const p of phrases) if (compact.includes(p)) push(p === 'ai味' || p === '去ai味' ? '去AI味' : p);
-  if (compact.includes('文案') && (compact.includes('ai') || compact.includes('味'))) { push('去AI味'); push('文案'); }
-  const stop = new Set('的了呢吗啊把被在是有我要帮做一份一个能否可以怎么如何请'.split(''));
+  for (const [p, label] of phrases) {
+    if (compact.includes(p)) { push(label); if (keys.length >= 2) return keys.slice(0, 2).join(' '); }
+  }
+  if (compact.includes('文案') && (compact.includes('ai') || compact.includes('味'))) {
+    push('去AI味'); push('文案');
+    if (keys.length >= 2) return keys.slice(0, 2).join(' ');
+  }
+  const en = src.toLowerCase().match(/[a-z][a-z0-9\\-]{1,24}/g) || [];
+  for (const w of en) {
+    if (['the','and','for','with','skill','skills','http','https','www'].includes(w)) continue;
+    push(w.length <= 3 ? w.toUpperCase() : w);
+    if (keys.length >= 2) return keys.slice(0, 2).join(' ');
+  }
+  // 禁止滑动切碎；短串整段，长串仅末 2 字题眼
+  const stop = new Set('的了呢吗啊把被在是有我要帮做一份一个能否可以怎么如何请帮忙去掉删除去除一下工具设计用来实现功能需求'.split(''));
   const cjk = [...compact].filter(ch => /[\\u4e00-\\u9fff]/.test(ch) && !stop.has(ch)).join('');
-  for (let i = 0; i + 1 < cjk.length && keys.length < 3; i++) push(cjk.slice(i, i + 2));
-  return (keys.slice(0, 3).join(' ') || compact.slice(0, 8));
+  if (!keys.length && cjk) {
+    if (cjk.length <= 6) push(cjk);
+    else {
+      const tail = cjk.slice(-2);
+      if (tail && ![...tail].every(ch => stop.has(ch))) push(tail);
+    }
+  }
+  return (keys.slice(0, 2).join(' ') || compact.slice(0, 8));
 }
 
 function discoverSrc(intent) {
+  // 本机就绪时强制用本地 discover.html，避免 GitHub Pages 旧 embed 仍含滑窗假词
   const q = compressDiscoverQuery(intent);
-  const base = DISCOVER_READY ? DISCOVER_HREF.split('?')[0] : PUBLIC_EMBED;
-  return q ? (base + '?q=' + encodeURIComponent(q)) : base;
+  const base = DISCOVER_READY
+    ? 'discover.html'
+    : (PUBLIC_EMBED || DISCOVER_HREF || '').split('?')[0];
+  const qs = ['_kw=2', '_=' + Date.now()];
+  if (q) qs.unshift('q=' + encodeURIComponent(q));
+  return base + '?' + qs.join('&');
 }
 
 function openDiscoverTab() {
@@ -420,10 +453,9 @@ function loadDiscoverFrame() {
   // 本机无 discover.html 时仍可用公开 embed；file:// 下 iframe 跨域可能被拦，提供新窗口
   wrap.style.display = '';
   fallback.style.display = DISCOVER_READY ? 'none' : 'block';
-  if (frame.getAttribute('data-src') !== src) {
-    frame.setAttribute('data-src', src);
-    frame.src = src;
-  }
+  // 每次切入都带时间戳重载，杜绝 iframe 缓存旧 JS
+  frame.setAttribute('data-src', src);
+  frame.src = src;
 }
 
 // tabs 切换
@@ -479,16 +511,17 @@ function readPrefillIntentFromUrl() {
 }
 function applyIntentToInput(intent, source) {
   if (!intent) return;
+  const short = compressDiscoverQuery(intent);
   const findBtn = document.querySelector('.tabbtn[data-tab="find"]');
   if (findBtn && !findBtn.classList.contains('active')) findBtn.click();
-  intentEl.value = intent;
+  intentEl.value = short || intent;
   intentEl.dispatchEvent(new Event('input'));
   intentEl.focus();
   const hint = document.querySelector('.intent-hint');
   if (hint && source) {
     const mark = source === 'session'
-      ? (LANG === 'en' ? ' · prefilled from chat' : ' · 已从会话自动填入')
-      : (LANG === 'en' ? ' · prefilled from URL' : ' · 已从链接自动填入');
+      ? (LANG === 'en' ? ' · prefilled from chat (≤2 keywords)' : ' · 已从会话自动填入（≤2 关键词）')
+      : (LANG === 'en' ? ' · prefilled from URL (≤2 keywords)' : ' · 已从链接自动填入（≤2 关键词）');
     if (!hint.dataset.baseZh) {
       hint.dataset.baseZh = hint.getAttribute('data-zh') || hint.textContent;
       hint.dataset.baseEn = hint.getAttribute('data-en') || hint.textContent;
@@ -496,9 +529,21 @@ function applyIntentToInput(intent, source) {
     hint.textContent = (LANG === 'en' ? hint.dataset.baseEn : hint.dataset.baseZh) + mark;
   }
 }
+function readTabFromUrl() {
+  try { return (new URLSearchParams(location.search).get('tab') || '').trim(); }
+  catch (_) { return ''; }
+}
 function applyPrefillQuery() {
   const fromUrl = readPrefillIntentFromUrl();
-  if (fromUrl) { applyIntentToInput(fromUrl, 'url'); return; }
+  const wantDiscover = readTabFromUrl() === 'discover';
+  const after = () => {
+    if (wantDiscover) openDiscoverTab();
+    else if (intentEl.value.trim() && document.getElementById('empty') &&
+             document.getElementById('empty').style.display === 'block') {
+      // 本机无匹配时突出 Feeds 入口（不强制跳转，避免抢走找技能结果）
+    }
+  };
+  if (fromUrl) { applyIntentToInput(fromUrl, 'url'); after(); return; }
   // file:// 无法打 API；http(s) 看板拉取 MCP 落盘的会话意图
   if (location.protocol === 'http:' || location.protocol === 'https:') {
     fetch('/api/pending_intent', { cache: 'no-store' })
@@ -506,9 +551,12 @@ function applyPrefillQuery() {
       .then(data => {
         const intent = (data && data.intent || '').trim();
         if (intent) applyIntentToInput(intent, 'session');
+        after();
       })
-      .catch(() => {});
+      .catch(() => { after(); });
+    return;
   }
+  after();
 }
 window.addEventListener('hashchange', applyPrefillQuery);
 window.addEventListener('popstate', applyPrefillQuery);

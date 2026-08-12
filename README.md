@@ -50,7 +50,8 @@ python skillpick.py install
 
 ## 装好后怎么用
 
-1. **会话内**：说「帮我选个 skill 做周报」「有没有 skill 能剪视频」→ 弹出候选，点选后执行  
+1. **会话内**：说「帮我选个 skill 做周报」「帮我看看本机有没有剪视频的能力」「我要干周报了哪个 skill 最适配」「整理一下我当前安装的所有 skills」→ 弹出看板 + 候选，点选后执行  
+
 2. **看板**：打开 `~/.skill-picker/dashboard.html`（无需服务器）  
 3. **CLI**：`python ~/.skill-picker/skillpick.py match "意图" --top 4 --json`
 

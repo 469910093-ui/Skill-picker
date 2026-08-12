@@ -192,9 +192,20 @@ class TestCursorRuleInstall(unittest.TestCase):
     def test_cursor_rule_template_has_wake_phrases(self):
         text = skillpick.CURSOR_RULE_TEMPLATE
         self.assertIn("alwaysApply: true", text)
-        for phrase in ("帮我选个 skill", "用哪个 skill", "有没有 skill",
-                       "理技能", "skill_match", "open_resource"):
+        for phrase in (
+            "帮我选个 skill", "用哪个 skill", "有没有 skill", "帮我找找",
+            "本机有没有", "你会", "最适配", "整理一下我当前安装的所有 skills",
+            "理技能", "skill_match", "open_resource",
+        ):
             self.assertIn(phrase, text, f"规则须含唤起/步骤关键词: {phrase}")
+
+    def test_meta_skill_description_has_expanded_wake_phrases(self):
+        text = skillpick.META_SKILL_TEMPLATE
+        for phrase in (
+            "帮我看看本机有没有", "帮我找找", "最适配",
+            "整理一下我当前安装的所有 skills", "你会",
+        ):
+            self.assertIn(phrase, text, f"meta-skill 须含唤起语: {phrase}")
 
 
 if __name__ == "__main__":

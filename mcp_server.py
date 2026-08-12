@@ -43,8 +43,9 @@ TOOLS = [
     {
         "name": "skill_match",
         "description": (
-            "当用户说「帮我选个 skill / 用哪个 skill / 有没有 skill / 本机 skills / "
-            "查找本机最适合的 skills」时调用。"
+            "当用户说「帮我选个 skill / 用哪个 skill / 有没有 skill / 帮我找找… / "
+            "帮我看看本机有没有…能力 / 你会…吗（找 skill）/ "
+            "我要干…了哪个 skill 最适配 / 本机 skills / 查找本机最适合的 skills」时调用。"
             "在本机全部 skills 中检索候选（与看板同一引擎）。返回候选 + 门禁 + dashboard_url。"
             "HARD GATE: dashboard_required=true；必须先打开 dashboard_url 再列候选。"
         ),
@@ -61,6 +62,8 @@ TOOLS = [
         "name": "skill_dashboard",
         "description": (
             "硬门禁入口：确保本机 skills 看板服务在运行，返回可打开的 URL。"
+            "用户说「整理一下我当前安装的所有 skills / 打开看板 / 理技能 / skill 总览」"
+            "或任何选/找 skill 话术时也应先调本工具。"
             "可选传入用户意图，URL 会带 ?q= 预填并自动展示匹配结果（勿让用户重输）。"
             "调用方拿到 URL 后必须立刻打开："
             "Cursor 用 open_resource / 内置浏览器侧边打开；终端宿主用系统默认浏览器。"
@@ -69,37 +72,62 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "intent": {"type": "string",
-                           "description": "可选：用户意图，写入 URL ?q= 让看板自动匹配"},
+                           "description": "可选：用户意图；写入 URL 的 ?q= 会压成≤2个短关键词"},
+                "tab": {"type": "string",
+                        "description": "可选：discover = 直接打开「去 GitHub 发现/Feeds」子页"},
             },
         },
     },
 ]
 
 
-def dashboard_url_with_intent(base_url: str, intent: str = "", *, bust: bool = True) -> str:
+def _short_query(intent: str) -> str:
+    """看板/Feeds 预填只用短关键词（≤2），避免长句拖垮匹配。"""
+    try:
+        from discover import compress_intent_query
+        return compress_intent_query(intent, max_keys=2)
+    except Exception:  # noqa: BLE001
+        parts = (intent or "").strip().split()
+        return " ".join(parts[:2]) if parts else ""
+
+
+def dashboard_url_with_intent(
+    base_url: str,
+    intent: str = "",
+    *,
+    bust: bool = True,
+    tab: str = "",
+) -> str:
     """把意图写进看板 URL 的 ?q=（不用 #q=：Cursor/Electron 打开时常丢掉 fragment）。
 
-    bust=True 时附加 &_=<ms>，迫使已打开的看板标签页导航刷新，避免仍停在空白搜索。
+    ?q= 一律压成 ≤2 个短关键词。bust=True 时附加 &_=<ms> 强制刷新。
+    tab=discover 时直接打开「去 GitHub 发现」Feeds 子页。
     """
     intent = (intent or "").strip()
+    q = _short_query(intent) if intent else ""
     if not base_url:
         return base_url
     parsed = urllib.parse.urlparse(base_url)
     qs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-    qs = [(k, v) for k, v in qs if k not in ("q", "_")]
-    if intent:
-        qs.append(("q", intent))
+    qs = [(k, v) for k, v in qs if k not in ("q", "_", "tab")]
+    if q:
+        qs.append(("q", q))
         if bust:
             qs.append(("_", str(int(time.time() * 1000))))
+    if tab:
+        qs.append(("tab", tab))
     new_query = urllib.parse.urlencode(qs, quote_via=urllib.parse.quote)
     # 清掉旧 #q= fragment，避免与 ?q= 双源冲突
-    frag = "" if (intent or parsed.fragment.startswith("q=")) else parsed.fragment
+    frag = "" if (q or parsed.fragment.startswith("q=")) else parsed.fragment
     return urllib.parse.urlunparse(parsed._replace(query=new_query, fragment=frag))
 
 
 def save_pending_intent(intent: str, source: str = "mcp") -> None:
-    """把会话意图落到本地，供看板/serve 在 URL 参数丢失时自动预填。"""
-    intent = (intent or "").strip()
+    """把会话意图落到本地，供看板/serve 在 URL 参数丢失时自动预填。
+
+    落盘的是压缩后的短关键词（≤2），与 ?q= 一致。
+    """
+    intent = _short_query(intent)
     if not intent:
         return
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -170,21 +198,32 @@ class McpServer:
         if not query:
             return {"error": "query 不能为空"}
         top = int(args.get("top") or 4)
+        # 检索仍用完整意图（上下文更准）；看板预填用短词
         results = matching.match(self.get_index(), query, top=top)
-        dash = self.tool_skill_dashboard({"intent": query})
+        short_q = _short_query(query)
+        dash_args = {"intent": query}
+        if not results:
+            dash_args["tab"] = "discover"
+        dash = self.tool_skill_dashboard(dash_args)
         return {
             "query": query,
+            "short_query": short_q,
             "gates": self.gates_brief(),
             "results": results,
             "dashboard_required": True,
             "dashboard_url": dash.get("url") or "",
             "dashboard_fallback_file": dash.get("fallback_file") or str(DASHBOARD_HTML),
+            "discover_tab": "discover" if not results else "",
             "agent_must": DASHBOARD_AGENT_MUST,
             "note": (
-                "" if results else
-                "本机没有匹配的 skill，不要硬凑。可引导用户打开看板「去 GitHub 发现」子页"
-                "（skill-feed lite，无关注/发布），自行去 GitHub 安装后再 scan。"
-            ) + " 必须先打开 dashboard_url 再向用户展示候选。",
+                (
+                    "本机没有匹配的 skill，不要硬凑。"
+                    "dashboard_url 已带 tab=discover，必须打开「去 GitHub 发现 / Feeds」子页；"
+                    "用 short_query（≤2 词）在远程流里找，自行安装后再 scan。"
+                )
+                if not results else
+                "必须先打开 dashboard_url 再向用户展示候选；向用户复述意图时只用 short_query（≤2 词）。"
+            ),
         }
 
     @staticmethod
@@ -219,30 +258,33 @@ class McpServer:
                     break
         fallback = str(DASHBOARD_HTML)
         intent = (args.get("intent") or "").strip()
-        # 会话意图落盘：即使 Cursor 打开时丢掉 ?q=，serve/看板仍能自动预填
+        tab = (args.get("tab") or "").strip()
+        # 会话意图落盘：即使 Cursor 打开时丢掉 ?q=，serve/看板仍能自动预填（短词）
         if intent:
             save_pending_intent(intent, source="skill_dashboard")
         if not url:
             fallback_uri = dashboard_url_with_intent(
-                DASHBOARD_HTML.resolve().as_uri(), intent, bust=False)
+                DASHBOARD_HTML.resolve().as_uri(), intent, bust=False, tab=tab)
             return {
                 "url": "",
                 "fallback_file": fallback,
                 "fallback_url": fallback_uri,
+                "short_query": _short_query(intent),
                 "dashboard_required": True,
                 "agent_must": DASHBOARD_AGENT_MUST,
-                "note": "serve 启动失败，请用浏览器打开 fallback_url（已带 ?q= 意图，file:// 可用）",
+                "note": "serve 启动失败，请用浏览器打开 fallback_url（已带短词 ?q=，file:// 可用）",
             }
-        url = dashboard_url_with_intent(url, intent, bust=True)
+        url = dashboard_url_with_intent(url, intent, bust=True, tab=tab)
         return {
             "url": url,
             "fallback_file": fallback,
             "fallback_url": dashboard_url_with_intent(
-                DASHBOARD_HTML.resolve().as_uri(), intent, bust=False),
+                DASHBOARD_HTML.resolve().as_uri(), intent, bust=False, tab=tab),
+            "short_query": _short_query(intent),
             "dashboard_required": True,
             "agent_must": DASHBOARD_AGENT_MUST,
-            "note": "Cursor: open_resource 必须打开完整 url（含 ?q=），禁止手改成无参数空白页。"
-                    " 意图已写入 pending_intent，看板无 ?q= 时也会自动预填。",
+            "note": "Cursor: open_resource 必须打开完整 url（含短词 ?q=，≤2 关键词），禁止手改成无参数空白页。"
+                    " 意图已写入 pending_intent；本机无解时用 tab=discover 打开 Feeds。",
         }
 
     # ---------------- 协议 ----------------

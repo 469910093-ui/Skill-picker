@@ -436,9 +436,12 @@ META_SKILL_TEMPLATE = """---
 name: skill-picker
 description: >-
   必用触发语（命中任一句即启用）：帮我选个 skill、用哪个 skill、有没有 skill、
+  帮我找找、帮我看看本机有没有…能力、本机有没有…能力、你会…吗（想找 skill/本机能力时）、
+  我要干…了哪个 skill 最适配、哪个 skills 最适配我的需求、整理一下我当前安装的所有 skills、
   查找本机最适合的 skills、使用本机 skills 帮我做、用本机的 skill 来做、
   本机装了哪些 skills、打开 skills 看板、理技能、skill 总览、看看重复 skill。
-  Also use when 用户想不起 skill 名字、在多个相似 skills 间犹豫、要浏览/筛选/清理本机 skills。
+  Also use when 用户想不起 skill 名字、在多个相似 skills 间犹豫、要浏览/筛选/清理本机 skills、
+  或用口语问「你会不会做 X / 本机能不能做 X」来找 skill。
   HARD GATE: 必须先打开看板（MCP skill_dashboard / skill_match 的 dashboard_url /
   serve / file://）再列候选；只在对话里列文字 = 失败。
   用户已点名具体 skill、或任务与选 skill 无关时不要使用。
@@ -493,7 +496,11 @@ description: >-
 适用话术（全部强制开看板；用户说下面任一句都必须走本流程）：
 
 - 查找/选用：「帮我选个 skill」「用哪个 skill 做 X」「有没有 skill 能…」
+  「帮我找找 X」「帮我看看本机有没有 X 能力」「本机有没有 X 能力」
+  「你会 X 吗 / 你会不会 X」（意图是找 skill 或盘点本机能力时）
+  「我要干 X 了，哪个 skill(s) 最适配我的需求」
   「查找本机最适合的 skills」「使用本机 skills 帮我做 X」「本机装了哪些 skills」
+- 盘点/整理：「整理一下我当前安装的所有 skills」「本机 skills 清单」「skills 都装了啥」
 - 浏览/清理：「打开 skills 看板」「理技能」「看看重复」「清理」「skill 总览」
 
 看板 URL 带意图：`.../dashboard.html?q=<URL编码的意图>`（用查询参数，不用 #q=，
@@ -632,7 +639,7 @@ def register_mcp_all() -> None:
 
 
 CURSOR_RULE_TEMPLATE = """---
-description: 用户说「选/找 skill、本机 skills、理技能」时必须走 skill-picker
+description: 用户说选/找 skill、本机有没有某能力、你会做X吗、整理已装 skills、理技能时必须走 skill-picker
 alwaysApply: true
 ---
 
@@ -640,13 +647,18 @@ alwaysApply: true
 
 当用户消息命中任一类意图时，**必须立刻执行 skill-picker 流程**，不要凭记忆猜 skill：
 
-- 选/找：「帮我选个 skill」「用哪个 skill」「有没有 skill」「查找本机最适合的 skills」
-  「使用本机 skills 帮我做…」「用本机的 skill 来做」「本机装了哪些 skills」
+- 选/找：「帮我选个 skill」「用哪个 skill」「有没有 skill」「帮我找找…」
+  「查找本机最适合的 skills」「使用本机 skills 帮我做…」「用本机的 skill 来做」
+  「我要干…了，哪个 skill / skills 最适配我的需求」
+- 能力盘点：「帮我看看本机有没有…能力」「本机有没有…能力」「本机装了哪些 skills」
+  「你会…吗 / 你会不会…」（问的是本机/skill 能否覆盖某能力，不是纯闲聊）
+- 整理清单：「整理一下我当前安装的所有 skills」「skills 清单」「都装了哪些 skill」
 - 理/看：「打开 skills 看板」「理技能」「看看重复」「skill 总览」「清理 skills」
 
 ## 必做步骤（顺序强制）
 
 1. 调用 MCP `skill_dashboard`（intent=用户原话/会话上下文意图），或 `skill_match`（query=同上, top=4）
+   - 「整理/清单/装了哪些」类：intent 可为空或「全部」，以看板总览 + catalog 为主
 2. 用 `open_resource`（或系统浏览器）**实际打开**返回的完整 `dashboard_url`（含 `?q=`；
    禁止剥掉查询参数；没有 URL 则开 `fallback_url` / `dashboard_fallback_file`）
 3. 看板应已自动填入意图并展示匹配结果；再在对话里给出 2–4 个候选 +「推荐」，让用户点选
@@ -658,6 +670,7 @@ alwaysApply: true
 - 打开不带 `?q=` 的空白看板，让用户重新输入意图
 - 凭记忆排序 / 直接替用户选定 skill
 - G1 FAIL 时假装结果完整（须提醒补 `extra_roots`）
+- 对「你会写 Python 吗」这类纯通识问答抢路由（仅当意图是找 skill / 盘点本机能力时启用）
 
 用户已点名具体 skill 名（如「用 work-report」）时不要抢路由。
 """
@@ -845,6 +858,14 @@ def cmd_serve(argv: list[str]) -> None:
             if "/api/" in (args[0] if args else ""):
                 super().log_message(fmt, *args)
 
+        def end_headers(self):  # noqa: N802
+            # HTML/JS 发现页禁止缓存，避免仍渲染旧版滑窗关键词
+            path = urllib.parse.urlparse(self.path).path or "/"
+            if path.endswith((".html", ".js", ".css")) or path in ("/", "/dashboard.html", "/discover.html"):
+                self.send_header("Cache-Control", "no-store, max-age=0, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+            super().end_headers()
+
         def do_GET(self):  # noqa: N802
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path or "/"
@@ -863,8 +884,13 @@ def cmd_serve(argv: list[str]) -> None:
                 if not (qs.get("q") and qs["q"][0].strip()):
                     intent = load_pending_intent()
                     if intent:
+                        try:
+                            from discover import compress_intent_query
+                            short = compress_intent_query(intent, max_keys=2) or intent
+                        except Exception:  # noqa: BLE001
+                            short = intent
                         q = urllib.parse.urlencode({
-                            "q": intent,
+                            "q": short,
                             "_": str(int(datetime.now(timezone.utc).timestamp() * 1000)),
                         })
                         self.send_response(302)
