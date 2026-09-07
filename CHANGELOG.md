@@ -6,6 +6,15 @@
 
 ### Added
 - 扩充会话唤起语：本机有没有…能力、你会…吗、帮我找找、哪个 skill 最适配、整理已装 skills 等口语
+- 长意图在打开发现页前先压缩，避免 `?q=` 塞进整段对话
+- 变现与握手的已锁定设计决定（`docs/monetization-handshake.md`）
+- `version.py` 作为版本号唯一真相源，并加一致性测试
+
+### Fixed
+- MCP `SERVER_INFO` 谎报 `1.0.0`（CHANGELOG 与 release 都停在 0.2.1，从无此版本），
+  宿主握手时拿到的版本号对不上任何一次真实发布
+- README / `dashboard.py` 的「无外部 API / 无外部资源」措辞改准确：发现 tab 在本机
+  未同步时会加载公开 embed，找技能 / 理技能仍全程不发网络请求
 
 ## [0.2.1] - 2026-07-27
 
