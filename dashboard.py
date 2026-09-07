@@ -9,7 +9,9 @@
 打分常量单一真相源：rules.json（与 matching.py / match CLI / meta-skill 共用），
 JS 是同构镜像，禁止在本文件手写 SYN/权重。
 
-无服务器、无外部资源、无第三方库。
+无服务器、无第三方库。找技能 / 理技能两个 tab 不加载任何外部资源；
+「去 GitHub 发现」tab 例外：本机未同步 discover.html 时，iframe 会加载
+PUBLIC_EMBED 指向的公开发现页（切到该 tab 才发起，见 __DISCOVER_HREF__）。
 """
 
 import html
