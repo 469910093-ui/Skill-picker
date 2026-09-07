@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import matching  # noqa: E402
+from version import __version__  # noqa: E402
 
 DATA_DIR = Path.home() / ".skill-picker"
 CATALOG_JSON = DATA_DIR / "catalog.json"
@@ -32,7 +33,7 @@ SERVE_PORTS = range(8471, 8481)
 PENDING_INTENT_TTL_SEC = 300  # 5 分钟内看板可自动消费会话意图
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_INFO = {"name": "skill-picker", "version": "1.0.0"}
+SERVER_INFO = {"name": "skill-picker", "version": __version__}
 
 DASHBOARD_AGENT_MUST = (
     "HARD GATE: 在向用户列出任何候选之前，必须用 open_resource / 系统浏览器实际打开 "
