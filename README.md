@@ -39,8 +39,9 @@ python skillpick.py install
 | **找技能** | 「用哪个 skill 做周报」→ 会话内 2–4 个候选 + AI 推荐，你自己点选 |
 | **理技能** | 同名漂移、功能重叠自动圈出，红色感叹号提醒（只提示，不代删） |
 | **本地看板** | 单文件 HTML，意图输入实时匹配，双击即可打开 |
+| **一键安装** | `add <github 地址>` 从 GitHub 装 skill：先出计划（来源 / 提交号 / 目标路径）再写盘，**同名绝不覆盖**，逐文件 sha256 存证，装完自动体检，`remove` 可回滚 |
 | **五道门禁** | 工具副本 / 覆盖率 / 解析质量 / 漂移 / 匹配黄金用例，每次扫描自检 |
-| **本地优先** | 无服务器、无账号、零第三方依赖（Python 标准库）；找技能 / 理技能全程不发网络请求。唯一的外部请求来自「去 GitHub 发现」tab：本机未同步 skill-feed 时，它会内嵌加载公开发现页 |
+| **本地优先** | 无服务器、无账号、零第三方依赖（Python 标准库）；找技能 / 理技能全程不发网络请求。出网只有两处，都由你主动触发：「去 GitHub 发现」tab（本机未同步 skill-feed 时内嵌加载公开发现页）、以及 `add` 拉取 GitHub 压缩包 |
 
 <p align="center">
   <img src="docs/assets/demo-tidy.png" alt="Skill Picker — 理技能：漂移与重叠聚簇" width="920">
@@ -62,8 +63,26 @@ python skillpick.py install
 | `python skillpick.py install` | 扫描 + 装 meta-skill + 自拷贝 |
 | `python skillpick.py scan` / `check` | 刷新索引；退出码 0=可信 / 2=门禁 FAIL |
 | `python skillpick.py match "意图"` | 共享引擎检索候选 |
+| `python skillpick.py add <github>` | 从 GitHub 装 skill；不带 `--yes` 只打印计划 |
+| `python skillpick.py installed` | 列出装过的 skill 及完整性（改动 / 缺失） |
+| `python skillpick.py remove <id> --yes` | 卸载回滚；改动过的文件需 `--force` |
 | `python skillpick.py serve` | 本地看板服务（可选） |
 | `python -m unittest discover -s tests` | 测试（含黄金匹配回归） |
+
+### 从 GitHub 装一个
+
+```bash
+# 1) 先看计划：来源仓库、提交号、将写入哪个宿主的哪个路径、有什么冲突
+python skillpick.py add https://github.com/anthropics/skills --path skills/canvas-design
+
+# 2) 确认无误再写盘，装完自动重扫 + 跑五道门禁
+python skillpick.py add https://github.com/anthropics/skills --path skills/canvas-design --yes
+
+# 3) 不想要了（只删自己写过、且装完没被改过的文件）
+python skillpick.py remove claude-code:canvas-design --yes
+```
+
+monorepo 不给 `--path` 时会把候选子目录列出来让你挑。默认装到 skill 最多的那个宿主，`--host` 可改，`--as` 可改目录名。**目标目录已存在一律阻塞**，没有 `--force` 覆盖开关。
 
 ## 架构（一图）
 
@@ -90,7 +109,11 @@ rules.json ──── 近义词 / 权重 / 分类 / 黄金用例（唯一可�
 
 ## 只读铁律
 
-**永不修改、移动、删除任何已有 skill 文件**，只写 `~/.skill-picker/`。
+**永不修改、移动、删除任何已有 skill 文件。** 发现漂移或重叠只提醒，不代你合并。
+
+唯一往宿主目录写东西的是 `add`，它也守着同一条线：只新建自己的目录，
+**同名一律阻塞、没有覆盖开关**；`remove` 只删存证里自己写过、且装完之后
+没被改动过的文件。其余数据全在 `~/.skill-picker/`。
 
 ## 相关：从 GitHub 发现新 skill
 

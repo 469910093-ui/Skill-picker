@@ -11,6 +11,9 @@
   python skillpick.py match "意图"    共享打分引擎检索候选（--top N / --json）
   python skillpick.py install         scan + 把 meta-skill 装进四宿主 + 工具自拷贝
   python skillpick.py report          打印上次扫描的摘要
+  python skillpick.py add <github>    从 GitHub 装一个 skill（默认只出计划，--yes 才写）
+  python skillpick.py installed       列出经本工具安装的 skill 及其完整性
+  python skillpick.py remove <id>     卸载并回滚（只删自己写过且未被改动的文件）
 """
 
 import ast
@@ -23,6 +26,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import installer
 import matching
 
 HOME = Path.home()
@@ -31,9 +35,10 @@ CATALOG_JSON = DATA_DIR / "catalog.json"
 CATALOG_MD = DATA_DIR / "catalog.md"
 CONFIG_JSON = DATA_DIR / "config.json"
 INSTALL_MANIFEST = DATA_DIR / "install.json"
+INSTALLED_LEDGER = DATA_DIR / "installed.json"
 SELF_NAME = "skill-picker"
 TOOL_FILES = ["skillpick.py", "matching.py", "dashboard.py", "discover.py", "rules.json",
-              "translations.json", "mcp_server.py", "version.py"]
+              "translations.json", "mcp_server.py", "version.py", "installer.py"]
 MCP_SERVER_NAME = "skill-picker"
 
 # 扫描根目录 -> 宿主标签。存在才扫，不存在跳过。
@@ -130,6 +135,39 @@ def load_scan_roots() -> list[tuple[Path, str]]:
             seen.add(key)
             unique.append((path, host))
     return unique
+
+
+def _count_skill_dirs(root: Path) -> int:
+    return len(list(root.glob("*/SKILL.md"))) if root.is_dir() else 0
+
+
+def install_roots() -> dict[str, Path]:
+    """可写入的宿主 skills 根：host -> 目录。
+
+    只认末级叫 skills 的目录。插件缓存和宿主内置目录（`skills-cursor`）被排除：
+    那不是用户的地盘，往里写会被宿主自己的更新覆盖掉，装了等于没装。
+    一个宿主标签对应多个根时（codex 同时有 ~/.agents 和 ~/.codex），取 skill 更多
+    的那个——那才是用户实际在用的那份。
+    """
+    picked: dict[str, Path] = {}
+    for path, host in load_scan_roots():
+        if path.name.lower() != "skills":
+            continue
+        parts = {p.lower() for p in path.parts}
+        if "plugins" in parts or "cache" in parts:
+            continue
+        if host not in picked or _count_skill_dirs(path) > _count_skill_dirs(picked[host]):
+            picked[host] = path
+    for host, target in INSTALL_TARGETS.items():
+        picked.setdefault(host, target.parent.parent)  # …/skills/skill-picker/SKILL.md
+    return dict(sorted(picked.items()))
+
+
+def default_install_host(roots: dict[str, Path]) -> str:
+    """没指定 --host 时装哪去：skill 最多的宿主（同数按名字定序，保证可复现）。"""
+    if not roots:
+        return "cursor"
+    return sorted(roots.items(), key=lambda kv: (-_count_skill_dirs(kv[1]), kv[0]))[0][0]
 
 
 # ---------------------------------------------------------------- 扫描与解析
@@ -711,6 +749,20 @@ gates 中 G1 FAIL → 必须提醒用户补 `extra_roots` 并重扫，不得假�
 
 用户选定后读对应 SKILL.md 严格照做。无匹配 → 直说没有，不硬凑。
 
+### 6. 本机没有时：从 GitHub 装（可选）
+
+本机确实没有对应能力时，引导用户去看板「去 GitHub 发现」子页挑一个，
+拿到地址后用 `add` 装。**先跑不带 `--yes` 的那一版**，把来源仓库、提交号、
+将写入的目标路径给用户看过再装：
+
+```
+python "<HOME>/.skill-picker/skillpick.py" add <github 地址> [--path 子目录]
+python "<HOME>/.skill-picker/skillpick.py" add <github 地址> --yes   # 用户确认后
+```
+
+monorepo 会要求 `--path`（命令会把候选子目录列出来）。装完自动重扫并跑五道门禁；
+落盘和存证对不上会自动回滚。撤销用 `remove <id> --yes`。
+
 ## Quick Reference
 
 以下 `<HOME>` 指用户主目录（Windows PowerShell 用 `$env:USERPROFILE`，
@@ -726,12 +778,18 @@ macOS/Linux 用 `$HOME`；Windows 上 `python` 缺失时换 `py`，Unix 用 `pyt
 | `python "<HOME>/.skill-picker/skillpick.py" scan` | 刷新 catalog（新装 skill 后 / 超 7 天） |
 | `python "<HOME>/.skill-picker/skillpick.py" check` | 五道门禁体检（退出码 2=不可信） |
 | `<HOME>/.skill-picker/catalog.md` | 人读/兜底用瘦身索引 |
+| `python "<HOME>/.skill-picker/skillpick.py" add <github>` | ⑥ 装远程 skill；**不带 `--yes` 只出计划** |
+| `python "<HOME>/.skill-picker/skillpick.py" installed` | 列出本工具装过的 skill 与完整性 |
+| `python "<HOME>/.skill-picker/skillpick.py" remove <id> --yes` | 卸载回滚（只删自己写过的文件） |
 
 ## 只读铁律（不可违反）
 
-- 职责仅限**展示、比对、提醒、路由**。
+- 职责仅限**展示、比对、提醒、路由**，外加一件事：把用户点头过的远程 skill
+  装进来（`add`）。
 - **永远不要**因为发现漂移/重叠就修改、合并、移动、删除任何 skill 文件。
   用户明确要求清理属于独立任务，需逐项确认后另行执行。
+- `add` 只新建自己的目录，**同名目录一律阻塞、绝不覆盖**；`remove` 只删存证里
+  自己写过、且装完之后没被改动过的文件。已有 skill 依然是只读的。
 
 ## Common Mistakes
 
@@ -742,6 +800,8 @@ macOS/Linux 用 `$HOME`；Windows 上 `python` 缺失时换 `py`，Unix 用 `pyt
 | 「意图很明显，直接替用户选吧」 | 必须弹选项让用户点选，推荐≠代选 |
 | 「catalog 我大概记得，不用跑命令」 | 必须跑 match，凭记忆排序=页面与会话两套结果 |
 | 「发现两份重复，顺手合并掉」 | 只读铁律：只提醒，不动手 |
+| 「用户说装这个，直接 `add --yes`」 | 先出计划：来源、提交号、目标路径要过一遍人眼 |
+| 「同名撞了，加个 `--force` 盖过去」 | 没有这个开关。改名 `--as` 或先 `remove` |
 | 「没找到匹配，挑个最接近的凑数」 | 直说没有，让用户正常描述需求 |
 | 「G1 FAIL 但先不管，继续推荐」 | 覆盖不全=结果不可信，必须先提醒处理 |
 """
@@ -1020,6 +1080,211 @@ def cmd_match(argv: list[str]) -> None:
             print(f"   [{c['host']}] {c['path']}")
 
 
+def _flags(argv: list[str], valued: set[str], plain: set[str]) -> tuple[dict, str]:
+    """极简参数解析：返回（选项字典, 第一个位置参数）。未知选项直接退出。"""
+    options: dict[str, str | bool] = {}
+    positional = ""
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in valued and i + 1 < len(argv):
+            options[arg.lstrip("-")] = argv[i + 1]
+            i += 2
+        elif arg in plain:
+            options[arg.lstrip("-")] = True
+            i += 1
+        elif arg.startswith("-"):
+            print(f"未知参数 {arg}")
+            sys.exit(1)
+        else:
+            positional = positional or arg
+            i += 1
+    return options, positional
+
+
+def _known_skills() -> list[dict]:
+    if not CATALOG_JSON.exists():
+        return []
+    try:
+        return json.loads(CATALOG_JSON.read_text(encoding="utf-8")).get("skills", [])
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _under(path: str, root: str) -> bool:
+    prefix = os.path.normcase(os.path.join(root, ""))
+    return os.path.normcase(path).startswith(prefix)
+
+
+def post_install_check(receipt: dict) -> int:
+    """装完体检：落盘一致 → 重扫 → 进 catalog → 五道门禁。返回建议退出码。
+
+    只有落盘校验失败才自动回滚：那说明我们刚写的东西已经不是我们写的了（磁盘、
+    杀软、或者并发在改），留着比删掉危险。门禁 FAIL 不自动删——原因通常和这次安装
+    无关，替用户删掉是越权。
+    """
+    states = installer.verify_receipt(receipt)
+    broken = {rel: st for rel, st in states.items() if st != "ok"}
+    if broken:
+        print(f"[check] 落盘校验不一致（{broken}），自动回滚")
+        report = installer.remove_install(receipt, INSTALLED_LEDGER, force=True)
+        print(f"[check] 已回滚 {report['target']}")
+        return 2
+    print(f"[check] 落盘校验：{len(states)} 个文件与存证一致")
+
+    catalog = cmd_scan()
+    mine = [s for s in catalog["skills"] if _under(s.get("path", ""), receipt["target"])]
+    if not mine:
+        print(f"[check] 装好的 skill 没出现在 catalog 里：{receipt['target']}\n"
+              f"        这个宿主不在扫描根内，把它加进 {CONFIG_JSON} 的 extra_roots")
+        return 2
+    print(f"[check] catalog 已收录：{', '.join(s['name'] for s in mine)}")
+    twins = {s["host"] for s in catalog["skills"]
+             if s["name"] == mine[0]["name"] and not _under(s.get("path", ""), receipt["target"])}
+    if twins:
+        print(f"[check] 同名 skill 另有 {len(twins)} 个宿主也有（{', '.join(sorted(twins))}），"
+              "看板「理技能」tab 看漂移")
+    failed = [g["id"] for g in catalog["gates"] if g["status"] == "fail"]
+    if failed:
+        print(f"[check] 门禁 FAIL：{', '.join(failed)}（不一定和这次安装有关）\n"
+              f"        要撤销这次安装：python {Path(__file__).name} remove {receipt['id']} --yes")
+        return 2
+    return 0
+
+
+def cmd_add(argv: list[str]) -> None:
+    options, url = _flags(argv, {"--host", "--as", "--ref", "--path"}, {"--yes", "-y", "--json"})
+    if not url:
+        print('用法: python skillpick.py add <github 地址> [--path 子目录] [--host 宿主]\n'
+              '              [--as 目录名] [--ref 分支] [--yes]\n'
+              '默认只打印安装计划，不写任何文件；确认后加 --yes。')
+        sys.exit(1)
+
+    roots = install_roots()
+    host = str(options.get("host") or default_install_host(roots))
+    if host not in roots:
+        print(f"[add] 没有叫 {host} 的宿主。可选：{', '.join(roots)}")
+        sys.exit(1)
+
+    try:
+        source = installer.parse_source(url)
+        archive, ref = installer.download_archive(source, options.get("ref"))
+        subdir = options.get("path", source.subdir)
+        package = installer.read_package(archive, str(subdir or ""))
+        plan = installer.plan_install(
+            source, ref, package, host, roots[host],
+            existing=_known_skills(), as_name=options.get("as"),
+            ledger=installer.load_ledger(INSTALLED_LEDGER))
+    except installer.Ambiguous as e:
+        print(f"[add] {e}")
+        for candidate in e.candidates:
+            print(f"        --path {candidate}")
+        sys.exit(1)
+    except installer.InstallError as e:
+        print(f"[add] {e}")
+        sys.exit(1)
+
+    print(installer.render_plan(plan))
+    if not plan.ok:
+        sys.exit(2)
+    if not options.get("yes") and not options.get("y"):
+        print("\n[add] 以上只是计划，一个字节都没写。确认无误后重跑并加 --yes")
+        return
+
+    try:
+        receipt = installer.apply_install(plan, INSTALLED_LEDGER)
+    except installer.InstallError as e:
+        print(f"[add] {e}")
+        sys.exit(1)
+    print(f"\n[add] 已写入 {receipt['target']}（{len(receipt['files'])} 个文件）")
+    print(f"[add] 来源存证 id={receipt['id']} → {INSTALLED_LEDGER}")
+    sys.exit(post_install_check(receipt))
+
+
+def cmd_installed(argv: list[str]) -> None:
+    options, _ = _flags(argv, set(), {"--json"})
+    ledger = installer.load_ledger(INSTALLED_LEDGER)
+    rows = []
+    for receipt in ledger.get("installs", []):
+        states = installer.verify_receipt(receipt)
+        rows.append({
+            "id": receipt.get("id"),
+            "name": receipt.get("name"),
+            "host": receipt.get("host"),
+            "target": receipt.get("target"),
+            "source": (receipt.get("source") or {}).get("url"),
+            "ref": (receipt.get("source") or {}).get("ref"),
+            "commit": ((receipt.get("source") or {}).get("commit") or "")[:12],
+            "installed_at": receipt.get("installed_at"),
+            "files": len(states),
+            "modified": sorted(r for r, s in states.items() if s == "modified"),
+            "missing": sorted(r for r, s in states.items() if s == "missing"),
+        })
+    if options.get("json"):
+        print(json.dumps({"ledger": str(INSTALLED_LEDGER), "installs": rows},
+                         ensure_ascii=False, indent=2))
+        return
+    if not rows:
+        print(f"[installed] 还没用本工具装过 skill（存证 {INSTALLED_LEDGER}）")
+        print("[installed] 装一个：python skillpick.py add <github 地址>")
+        return
+    for row in rows:
+        health = "完好" if not (row["modified"] or row["missing"]) else \
+            f"改动 {len(row['modified'])} / 缺失 {len(row['missing'])}"
+        print(f"{row['id']}  {row['name']}  {row['files']} 文件  {health}")
+        print(f"   来源 {row['source']}  ref={row['ref']}  commit={row['commit'] or '未知'}")
+        print(f"   落地 {row['target']}  装于 {row['installed_at']}")
+        for rel in row["modified"]:
+            print(f"   [改动] {rel}")
+        for rel in row["missing"]:
+            print(f"   [缺失] {rel}")
+
+
+def cmd_remove(argv: list[str]) -> None:
+    options, key = _flags(argv, set(), {"--yes", "-y", "--force", "--json"})
+    ledger = installer.load_ledger(INSTALLED_LEDGER)
+    if not key:
+        print("用法: python skillpick.py remove <id 或名字> [--force] [--yes]")
+        print(f"已装：{', '.join(r.get('id', '?') for r in ledger.get('installs', [])) or '（空）'}")
+        sys.exit(1)
+    try:
+        receipt = installer.find_receipt(ledger, key)
+    except installer.InstallError as e:
+        print(f"[remove] {e}")
+        sys.exit(1)
+    if not receipt:
+        print(f"[remove] 存证里没有「{key}」。本工具只卸载自己装的东西，"
+              "手工装的请自行删除目录")
+        print(f"[remove] 已装：{', '.join(r.get('id', '?') for r in ledger.get('installs', [])) or '（空）'}")
+        sys.exit(1)
+
+    states = installer.verify_receipt(receipt)
+    print(f"卸载计划  {receipt['id']}  ←  {(receipt.get('source') or {}).get('url')}")
+    print(f"  目录    {receipt['target']}")
+    for rel, state in sorted(states.items()):
+        mark = {"ok": "删除", "modified": "改动过", "missing": "已不在"}[state]
+        print(f"  {mark}    {rel}")
+    if any(s == "modified" for s in states.values()) and not options.get("force"):
+        print("  提示    有文件装完之后被改过，加 --force 才会连同改动一起删")
+    if not options.get("yes") and not options.get("y"):
+        print("\n[remove] 以上只是计划，什么都没删。确认后重跑并加 --yes")
+        return
+
+    try:
+        report = installer.remove_install(receipt, INSTALLED_LEDGER,
+                                          force=bool(options.get("force")))
+    except installer.InstallError as e:
+        print(f"[remove] {e}")
+        sys.exit(1)
+    print(f"\n[remove] 已删 {len(report['removed'])} 个文件，"
+          f"目录{'已清空移除' if report['dir_gone'] else '保留（还有别的文件）'}")
+    for rel in report["leftover"]:
+        print(f"[remove] 保留（不是我们写的）：{rel}")
+    for line in report["failed"]:
+        print(f"[remove] 删除失败：{line}")
+    cmd_scan()
+
+
 def cmd_report() -> None:
     if not CATALOG_MD.exists():
         print("尚未扫描，先运行: python skillpick.py scan")
@@ -1129,6 +1394,12 @@ def main() -> None:
         # 先刷副本再扫：这样 G0 比的是装完之后的状态，门禁也才落在输出末尾（AGENTS.md 的口径）
         install_meta_skill()
         cmd_scan()
+    elif cmd == "add":
+        cmd_add(sys.argv[2:])
+    elif cmd == "installed":
+        cmd_installed(sys.argv[2:])
+    elif cmd in ("remove", "uninstall"):
+        cmd_remove(sys.argv[2:])
     elif cmd == "report":
         cmd_report()
     else:
