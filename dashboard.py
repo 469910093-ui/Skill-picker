@@ -772,7 +772,7 @@ def build_dashboard() -> Path:
         from discover import PUBLIC_EMBED, sync_discover_page
 
         public_embed = PUBLIC_EMBED
-        synced = sync_discover_page()
+        synced = sync_discover_page(catalog)
         if synced and synced.exists():
             discover_ready = True
             discover_href = "discover.html"

@@ -722,7 +722,7 @@ def cmd_scan() -> dict:
     write_catalog_md(catalog)
     try:
         from discover import sync_discover_page
-        disc = sync_discover_page()
+        disc = sync_discover_page(catalog)
         if disc:
             print(f"[scan] discover 子页已同步 {disc}")
         else:
