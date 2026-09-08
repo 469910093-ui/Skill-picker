@@ -96,4 +96,20 @@ FIXTURE_SKILLS = [
            "飞书日历：管理日历日程和会议室。查看/搜索日程、创建/更新日程、查询忙闲、"
            "预定会议室。不负责查询过去的视频会议记录。",
            kw="飞书 日历 日程 会议室"),
+    # 大杂烩描述：把一堆触发词罗列进 description 的 skill。它靠描述字段刷高分，
+    # 且「设计」整串出现在描述里，一度还能白拿一次 desc_substr（同一条命中记两次）。
+    _skill("lark-apps",
+           "妙搭应用开发与托管：应用创建、本地全栈开发、云端生成迭代、创意设计"
+           "（UI mockup / 可交互原型 / 线框图 / 落地页 / 仪表盘 / 幻灯片 deck / 视觉探索）、"
+           "飞书平台能力集成、日志与监控查询。当用户要开发一个系统、工具、平台、应用，"
+           "或要设计 / design / mockup / prototype / wireframe / 做 PPT / deck / 视觉探索时使用。",
+           # 关键词刻意不沾设计类词——真实那条正是这个形状：名称与正文都不提设计，
+           # 全靠描述里罗列的触发词刷分。
+           kw="妙搭 应用 部署 飞书 环境变量 日志 协作者"),
+    # figma 同族里的白板工具。FigJam 是白板产品而非设计工具，「设计」不该把它
+    # 抬到出图类 skill 前面。
+    _skill("figma-use-figjam",
+           "This skill helps agents use Figma's use_figma MCP tool in the FigJam context. "
+           "Can be used alongside figma-use which has foundational context.",
+           kw="figma figjam whiteboard sticky notes sections connectors"),
 ]

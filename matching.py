@@ -184,6 +184,7 @@ def match(index: MatchIndex, raw_query: str, top: int = 4) -> list:
         return []
     q_toks = tokenize(q, query=True)
     qw = expand_intent(q_toks, rules, q_compact)
+    scored_toks = {t for t, _ in qw}
 
     all_cats = {c for s in index.skills for c in s.get("categories", [s.get("category", "")])}
     cat_pinned = {c for c in all_cats
@@ -196,18 +197,27 @@ def match(index: MatchIndex, raw_query: str, top: int = 4) -> list:
         ds = _field_score(qw, s["_desc"], index)
         ks = _field_score(qw, s["_kw"], index)
         score = w["name"] * ns + w["desc"] * ds + w["kw"] * ks
-        if ns > 0.08 and ds > 0.08:
+        floor = w["field_hit_floor"]
+        if ns > floor and ds > floor:
             score *= w["cross"]
-        elif ks > 0.1 and (ns > 0.08 or ds > 0.08):
+        elif ks > 0.1 and (ns > floor or ds > floor):
             score *= w["kw_cross"]
         if q_compact in s["_nt"]:
             score += w["name_substr"]
-        elif q_compact in s["_dt"]:
+        elif q_compact in s["_dt"] and q_compact not in scored_toks:
+            # 整串已作为打分 token 时不再加：描述分已经算过这份证据，再加就是同一
+            # 条命中记两次。「设计」这类短中文查询最容易踩到——描述里随便提一句
+            # 「创意设计」就能白拿 desc_substr。
             if (index.df.get(q_compact, 0) / index.n) <= w["desc_substr_max_df"]:
                 score += w["desc_substr"]
         cats = set(s.get("categories", [s.get("category", "")]))
         if cats & cat_pinned:
-            score += w["cat_pin"]
+            # 只在描述里沾到（名称与正文关键词都不命中）时，分类置顶只给一半。
+            # 这个 +0.35 是笔大额平价加分，把「描述里罗列了一堆触发词」和
+            # 「名字就叫这个」当同一档，大杂烩式的 description 就能靠它压过
+            # 名称直接命中的 skill。
+            desc_only = ns <= w["field_hit_floor"] and ks <= w["field_hit_floor"]
+            score += w["cat_pin"] * (w["cat_pin_desc_only"] if desc_only else 1.0)
         if score > w["min_score"]:
             results.append({
                 "name": s["name"],
@@ -221,7 +231,9 @@ def match(index: MatchIndex, raw_query: str, top: int = 4) -> list:
                 "why": {"name": round(ns, 3), "desc": round(ds, 3), "kw": round(ks, 3),
                         "cat_pinned": bool(cats & cat_pinned)},
             })
-    results.sort(key=lambda x: -x["score"])
+    # 同分按 dir_name 兜底排序。不加这一手，并列条目的先后取决于 catalog 的
+    # 输入顺序（即文件系统扫描顺序），同一份内容在两台机器上能给出不同 topN。
+    results.sort(key=lambda x: (-x["score"], x["dir_name"]))
     return results[:top]
 
 

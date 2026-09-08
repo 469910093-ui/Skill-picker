@@ -580,6 +580,7 @@ intentEl.addEventListener('input', () => {
   }
   const qToks = tokenize(q, {query: true});
   const qw = expandIntent(qToks, q);
+  const scoredToks = new Set(qw.map(([t]) => t));   // 供 desc_substr 双计守卫用
   // 场景名是否被意图点名（「设计」→「设计/Figma」）：该区整体置顶（多标签全参与）
   const catPinned = new Set(
     [...new Set(SKILLS.flatMap(s => s.cats))].filter(cat => {
@@ -592,20 +593,33 @@ intentEl.addEventListener('input', () => {
     const ds = fieldScore(qw, s._desc);              // 描述命中
     const ks = fieldScore(qw, s._kw);                // MD 正文关键词命中
     let score = W.name * ns + W.desc * ds + W.kw * ks;
-    if (ns > 0.08 && ds > 0.08) score *= W.cross;
-    else if (ks > 0.1 && (ns > 0.08 || ds > 0.08)) score *= W.kw_cross;
-    // 整串命中：名称强加分；描述仅当该词不常见才加，避免「设计」泛词刷分
+    const floor = W.field_hit_floor;
+    if (ns > floor && ds > floor) score *= W.cross;
+    else if (ks > 0.1 && (ns > floor || ds > floor)) score *= W.kw_cross;
+    // 整串命中：名称强加分；描述仅当该词不常见、且没被描述分算过才加
+    // （整串已是打分 token 时，desc 分已经算过这份证据，再加就是一条命中记两次）
     const qCompact = q.replace(/ /g, '');
     if (s._nt.replace(/ /g, '').includes(qCompact)) score += W.name_substr;
-    else if (s._dt.replace(/ /g, '').includes(qCompact)) {
+    else if (s._dt.replace(/ /g, '').includes(qCompact) && !scoredToks.has(qCompact)) {
       const dfRatio = (DF.get(qCompact) || 0) / Math.max(N, 1);
       if (dfRatio <= W.desc_substr_max_df) score += W.desc_substr;
     }
-    if (s.cats.some(c => catPinned.has(c))) score += W.cat_pin;  // 多标签任一被点名即抬升
+    // 多标签任一被点名即抬升；但只在描述里沾到（名称与正文关键词都不中）时只给一半——
+    // 这笔 +0.35 会把「描述罗列了一堆触发词」和「名字就叫这个」当同一档
+    if (s.cats.some(c => catPinned.has(c))) {
+      const descOnly = ns <= floor && ks <= floor;
+      score += W.cat_pin * (descOnly ? W.cat_pin_desc_only : 1);
+    }
     return { s, score, ns, ds };
   });
   const scoreMap = new Map(all.map(x => [x.s.name, x.score]));
-  const scored = all.filter(x => x.score > W.min_score).sort((a, b) => b.score - a.score).slice(0, 4);
+  const dirMap = new Map(all.map(x => [x.s.name, x.s.dir || x.s.name]));
+  // 同分按 dir 兜底，键与 matching.py 一致。不加这一手，并列条目的先后取决于
+  // catalog 输入顺序（即扫描顺序），同一份内容换台机器就能给出不同 topN。
+  const byScore = (an, bn) => (scoreMap.get(bn) || 0) - (scoreMap.get(an) || 0) ||
+                              (dirMap.get(an) < dirMap.get(bn) ? -1 : dirMap.get(an) > dirMap.get(bn) ? 1 : 0);
+  const scored = all.filter(x => x.score > W.min_score)
+                    .sort((a, b) => byScore(a.s.name, b.s.name)).slice(0, 4);
 
   // 过滤：纯打分 + 相对阈值。绝对线 min_score 之外，再砍掉低于第一名 30% 的长尾——
   // 不相关的内容一律不展示（此前 "train" 会因子串误中 training/constraint 拖出无关分区）
@@ -625,7 +639,7 @@ intentEl.addEventListener('input', () => {
     secBest.set(s, best);
     s.style.display = vis.length ? '' : 'none'; any = any || vis.length > 0;
     const grid = s.querySelector('.grid');
-    vis.sort((a, b) => cScore(b) - cScore(a)).forEach(c => grid.appendChild(c));
+    vis.sort((a, b) => byScore(a.dataset.name, b.dataset.name)).forEach(c => grid.appendChild(c));
   });
   document.getElementById('empty').style.display = any ? 'none' : 'block';
   [...sections].sort((a, b) => secBest.get(b) - secBest.get(a)).forEach(s => sectionsBox.appendChild(s));
@@ -650,7 +664,7 @@ intentEl.addEventListener('input', () => {
     let kws = nameRuns.map(r => '<span class="kw">' + T.name + r + '</span>').join('') +
               descRuns.map(r => '<span class="kw">' + T.desc + r + '</span>').join('') +
               kwRuns.map(r => '<span class="kw">' + T.body + r + '</span>').join('') + synHits;
-    const cross = x.ns > 0.08 && x.ds > 0.08 ? '<span class="kw" style="color:var(--green);background:rgba(74,222,128,.1)">' + T.cross + '</span>' : '';
+    const cross = x.ns > W.field_hit_floor && x.ds > W.field_hit_floor ? '<span class="kw" style="color:var(--green);background:rgba(74,222,128,.1)">' + T.cross + '</span>' : '';
     const mtNote = sMt(x.s) ? '<div class="mt-note">⟡ ' + T.mt + '</div>' : '';
     return '<div class="reco-card' + (i === 0 ? ' best' : '') + '">' +
       '<div class="reco-rank">' + (i + 1) + '</div><div class="reco-body">' +
@@ -870,6 +884,8 @@ def build_dashboard() -> Path:
     for m in merged:
         js_data.append({
             "name": m["name"],
+            # 并列兜底排序用的稳定键，必须和 matching.py 用的是同一个字段
+            "dir": m["dir_name"],
             "desc": m["description"][:220],
             "descZh": m["desc_zh"][:220], "descEn": m["desc_en"][:220],
             "mtZh": m["mt_zh"], "mtEn": m["mt_en"],

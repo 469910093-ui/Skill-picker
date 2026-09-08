@@ -9,8 +9,18 @@
 - 长意图在打开发现页前先压缩，避免 `?q=` 塞进整段对话
 - 变现与握手的已锁定设计决定（`docs/monetization-handshake.md`）
 - `version.py` 作为版本号唯一真相源，并加一致性测试
+- 打分引擎数值一致性测试：把 `dashboard.py` 里的 JS 打分片段切出来喂 node，
+  与 `matching.py` 对排名和分数。此前只有正则查源码，证明得了「两边都写了这行」，
+  证明不了「两边算出同一个数」
 
 ### Fixed
+- G4 黄金用例「设计」回归：`lark-apps` 靠一段罗列了大量触发词的描述压过 figma 全家。
+  三处成因各修一处——整串命中与描述分重复计分（`desc_substr` 加双计守卫）、
+  FigJam 被当成设计工具的近义词（白板不是设计工具，从 `rules.json` 移除）、
+  只在描述里沾到分类却拿全额置顶加分（新增 `cat_pin_desc_only`，此种情形折半）
+- 并列条目的先后此前取决于文件系统扫描顺序，同一份 catalog 换台机器能给出不同 top-N；
+  两套引擎均改为按 `dir_name` 兜底排序
+- 交叉命中门槛（3 处）此前写死 0.08，改 `rules.json` 管不到它；收归 `field_hit_floor`
 - MCP `SERVER_INFO` 谎报 `1.0.0`（CHANGELOG 与 release 都停在 0.2.1，从无此版本），
   宿主握手时拿到的版本号对不上任何一次真实发布
 - README / `dashboard.py` 的「无外部 API / 无外部资源」措辞改准确：发现 tab 在本机
