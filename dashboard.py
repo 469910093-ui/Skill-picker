@@ -39,7 +39,14 @@ CAT_EN = {
     "出行/电商业务": "Travel & E-commerce",
     "其他": "Others",
 }
-GATE_EN = {"G1": "Coverage", "G2": "Parse quality", "G3": "Drift", "G4": "Golden queries"}
+GATE_EN = {"G0": "Tool copies", "G1": "Coverage", "G2": "Parse quality", "G3": "Drift",
+           "G4": "Golden queries"}
+# 状态字典按 status 直接下标，缺一个键就是整页生成崩掉，所以提到模块级由测试锁住覆盖面
+GATE_COLORS = {"pass": ("rgba(74,222,128,.1)", "#4ade80", "rgba(74,222,128,.35)"),
+               "warn": ("rgba(240,180,41,.1)", "#f0b429", "rgba(240,180,41,.4)"),
+               "fail": ("rgba(248,113,113,.12)", "#f87171", "rgba(248,113,113,.5)"),
+               "skip": ("rgba(148,163,184,.1)", "#94a3b8", "rgba(148,163,184,.35)")}
+GATE_MARK = {"pass": "✓", "warn": "⚠", "fail": "✗", "skip": "–"}
 
 
 # 双语判定与拼接收归 matching.py：索引口径必须与 CLI / meta-skill 完全一致，
@@ -913,19 +920,17 @@ def build_dashboard() -> Path:
              f"生成于 {catalog['generated_at'][:16]} UTC")
 
     # 门禁徽章与详情
-    gate_colors = {"pass": ("rgba(74,222,128,.1)", "#4ade80", "rgba(74,222,128,.35)"),
-                   "warn": ("rgba(240,180,41,.1)", "#f0b429", "rgba(240,180,41,.4)"),
-                   "fail": ("rgba(248,113,113,.12)", "#f87171", "rgba(248,113,113,.5)")}
     gate_pills, gate_detail = [], []
     for g in catalog.get("gates", []):
-        bg, fg, bd = gate_colors[g["status"]]
-        mark = {"pass": "✓", "warn": "⚠", "fail": "✗"}[g["status"]]
+        bg, fg, bd = GATE_COLORS[g["status"]]
+        mark = GATE_MARK[g["status"]]
         gate_pills.append(
             f'<span style="font-size:12px;border-radius:999px;padding:2px 12px;'
             f'background:{bg};color:{fg};border:1px solid {bd}" title="{html.escape(g["detail"])}"'
             f' data-zh="{mark} {g["id"]} {html.escape(g["name"], quote=True)}"'
             f' data-en="{mark} {g["id"]} {html.escape(GATE_EN.get(g["id"], g["name"]), quote=True)}"></span>')
-        if g["status"] != "pass":
+        # skip 只出灰徽章：它表示「这次没法比」，没有 items 也没有待办，展开就是个空框
+        if g["status"] not in ("pass", "skip"):
             items = "".join(f'<li style="color:var(--dim);font-size:12px;margin-left:18px">'
                             f'<code>{html.escape(it)}</code></li>' for it in g["items"][:15])
             action = (f'<div style="color:{fg};font-size:12.5px;margin-top:4px">处理：'

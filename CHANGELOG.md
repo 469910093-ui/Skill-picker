@@ -5,6 +5,14 @@
 ## [Unreleased]
 
 ### Added
+- G0 工具副本门禁：比对克隆目录与 `~/.skill-picker` 的工具文件哈希，过期或缺件即 FAIL，
+  并直接给出重装命令。产品的真实调用路径全在家目录那份（meta-skill、MCP 注册项、
+  catalog.md 里写的命令），而只有 `install` 会刷新它——`git pull` 后不重装，
+  修好的回归会继续 FAIL，门禁再按 AGENTS.md 把用户打发去仓库报 issue。
+  副本被就地改过（哈希 ≠ 安装时记录）单独报 WARN；无法定位克隆时 SKIP 而不是诬告
+- `install.json` 安装清单：记下副本来源目录与安装时哈希，家目录那份因此也能找到克隆做比对
+- 拷贝范围改为 `TOOL_FILES ∪ 工具递归 import 到的本地模块`，并加仓库级测试断言这个闭包
+  被 `TOOL_FILES` 覆盖（静态解析，含函数内的延迟 import）
 - 扩充会话唤起语：本机有没有…能力、你会…吗、帮我找找、哪个 skill 最适配、整理已装 skills 等口语
 - 长意图在打开发现页前先压缩，避免 `?q=` 塞进整段对话
 - 变现与握手的已锁定设计决定（`docs/monetization-handshake.md`）
@@ -14,6 +22,14 @@
   证明不了「两边算出同一个数」
 
 ### Fixed
+- `~/.skill-picker/mcp_server.py` 一启动就 `ModuleNotFoundError: version`：`version.py`
+  从来没进 `TOOL_FILES`，而 `mcp_server` 导它。Cursor 规则的第一步正是调 MCP
+  `skill_dashboard`，也就是说产品主路径一直是坏的，只能靠 CLI 兜底
+- 从 `~/.skill-picker` 自己跑 `install` 会崩：自拷贝时源与目标是同一个文件，
+  `shutil.copy2` 在 Windows 抛 `PermissionError`、POSIX 抛 `SameFileError`。
+  而 AGENTS.md 恰恰让用户一切命令都走 `~` 路径
+- `install` 改为先刷副本再扫描：这样 G0 比的是装完之后的状态，门禁也才真的落在
+  输出末尾（AGENTS.md 一直这么写，实际却打印在中间）
 - 看板与会话内对同一查询给出不同答案：看板喂 JS 的描述截 220 字、关键词截 300，
   而 CLI 索引全文（146/280 描述超 220、210/280 关键词超 300，共丢 4136 个 token）；
   且双语拼接只在看板侧存在。21 个查询里 18 个 top-4 不同，现已 21/21 一致

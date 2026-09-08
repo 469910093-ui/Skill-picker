@@ -13,6 +13,7 @@
   python skillpick.py report          打印上次扫描的摘要
 """
 
+import ast
 import hashlib
 import json
 import os
@@ -29,9 +30,10 @@ DATA_DIR = HOME / ".skill-picker"
 CATALOG_JSON = DATA_DIR / "catalog.json"
 CATALOG_MD = DATA_DIR / "catalog.md"
 CONFIG_JSON = DATA_DIR / "config.json"
+INSTALL_MANIFEST = DATA_DIR / "install.json"
 SELF_NAME = "skill-picker"
 TOOL_FILES = ["skillpick.py", "matching.py", "dashboard.py", "discover.py", "rules.json",
-              "translations.json", "mcp_server.py"]
+              "translations.json", "mcp_server.py", "version.py"]
 MCP_SERVER_NAME = "skill-picker"
 
 # 扫描根目录 -> 宿主标签。存在才扫，不存在跳过。
@@ -287,8 +289,136 @@ def discover_all_skill_files() -> list[Path]:
     return found
 
 
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def local_import_closure(entries: list[str], source: Path) -> set[str]:
+    """从 entries 出发递归收集所有本地 import（解析到 source 下同名 .py 的那些）。
+
+    只认单层文件模块，够用：本仓库是平铺结构，没有包。函数内的延迟 import 也要算进来
+    （cmd_scan 里的 discover / dashboard 就是这么导的），所以用 ast.walk 而不是只看顶层。
+    """
+    seen: set[str] = set()
+    queue = [e for e in entries if e.endswith(".py")]
+    while queue:
+        name = queue.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        f = source / name
+        if not f.exists():
+            continue
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                mods = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                mods = [node.module]
+            else:
+                continue
+            for m in mods:
+                cand = m.split(".")[0] + ".py"
+                if (source / cand).exists():
+                    queue.append(cand)
+    return seen
+
+
+def read_install_manifest(path: Path | None = None) -> dict:
+    try:
+        return json.loads((path or INSTALL_MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def write_install_manifest(src_dir: Path, files: list[str], data_dir: Path | None = None) -> Path:
+    """记下副本的来源与安装时哈希：G0 靠 source_dir 定位克隆，靠 files 认出就地改动。"""
+    data_dir = data_dir or DATA_DIR
+    target = data_dir / INSTALL_MANIFEST.name
+    source = str(src_dir)
+    if src_dir.resolve() == data_dir.resolve():
+        # 从家目录自己跑 install，别把 source_dir 指向自己，否则永远比不出漂移
+        source = read_install_manifest(target).get("source_dir", "")
+    target.write_text(json.dumps({
+        "source_dir": source,
+        "installed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "files": {f: _sha256(data_dir / f) for f in files if (data_dir / f).exists()},
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    return target
+
+
+def tool_copy_drift(data_dir: Path | None = None, running_dir: Path | None = None) -> dict:
+    """G0：家目录的工具副本是否与克隆目录一致、且没缺件。
+
+    产品的真实调用路径是 ~/.skill-picker —— meta-skill、MCP 注册项、catalog.md 里写的
+    命令全指向那份副本，而只有 install 会刷新它。`git pull` 后不重装，家目录跑的就还是
+    旧代码：修好的回归会继续 FAIL，门禁再按 AGENTS.md 把用户打发去仓库报 issue。
+    """
+    data_dir = data_dir or DATA_DIR
+    gate = {"id": "G0", "name": "工具副本", "items": [], "action": ""}
+    if not any((data_dir / f).exists() for f in TOOL_FILES):
+        gate.update(status="skip", detail=f"{data_dir} 下还没有工具副本（尚未 install）")
+        return gate
+
+    manifest = read_install_manifest(data_dir / INSTALL_MANIFEST.name)
+    running = (running_dir or Path(__file__).resolve().parent).resolve()
+    if running != data_dir.resolve():
+        source = running          # 正从克隆跑，源就是自己
+    elif manifest.get("source_dir"):
+        source = Path(manifest["source_dir"])
+    else:
+        gate.update(status="skip",
+                    detail="缺安装清单，无法定位克隆目录（重跑一次 install 即启用本门禁）")
+        return gate
+    if not (source / "skillpick.py").exists():
+        gate.update(status="skip", detail=f"克隆目录已不在 {source}（自拷贝模型允许删掉克隆）")
+        return gate
+
+    # 需要拷过去的 = TOOL_FILES ∪ 工具文件递归 import 到的本地模块。求并集而不是只信
+    # TOOL_FILES：version.py 就是这么漏的（mcp_server 导它，名单里没有，家目录那份
+    # MCP 一启动就 ModuleNotFoundError）。
+    required = sorted({f for f in TOOL_FILES if (source / f).exists()}
+                      | local_import_closure(TOOL_FILES, source))
+    recorded = manifest.get("files", {})
+    missing, stale, edited, checked = [], [], [], []
+    for f in required:
+        src = source / f
+        if not src.exists():
+            continue
+        checked.append(f)
+        dst = data_dir / f
+        if not dst.exists():
+            missing.append(f"{f}（家目录没有这个文件）")
+            continue
+        dst_hash = _sha256(dst)
+        if dst_hash != _sha256(src):
+            stale.append(f"{f}（家目录副本 ≠ 克隆）")
+        if recorded.get(f) and dst_hash != recorded[f]:
+            edited.append(f"{f}（≠ 安装时记录，副本被就地改过）")
+
+    since = manifest.get("installed_at", "未知时间")
+    install_cmd = f'python "{source / "skillpick.py"}" install'
+    if missing or stale:
+        gate.update(
+            status="fail", items=missing + stale + edited,
+            detail=f"{len(missing) + len(stale)}/{len(checked)} 个工具文件缺失或与克隆不一致"
+                   f"（家目录副本停留在 {since}）；G1–G4 的结论可能来自旧代码",
+            action=f"重跑 {install_cmd} 刷新副本 —— 这不是引擎回归，别去报 issue")
+    elif edited:
+        gate.update(
+            status="warn", items=edited,
+            detail=f"{len(edited)} 个副本在安装后被就地改过（当前与克隆一致，但下次 install 会覆盖）",
+            action="就地改动不进版本管理；要保留请改克隆目录再 install")
+    else:
+        gate.update(status="pass", detail=f"{len(checked)} 个工具文件与 {source} 逐字节一致")
+    return gate
+
+
 def run_gates(catalog: dict) -> list[dict]:
-    """四道强制门禁：G1 覆盖率 / G2 解析质量 / G3 漂移提醒 / G4 匹配黄金用例。"""
+    """五道强制门禁：G0 工具副本 / G1 覆盖率 / G2 解析质量 / G3 漂移提醒 / G4 匹配黄金用例。"""
     # 用字面路径比较：skills 目录里常见符号链接，resolve 会解析到根目录之外造成误报
     roots = [os.path.normcase(str(r)) for r, _ in load_scan_roots() if r.is_dir()]
 
@@ -298,7 +428,7 @@ def run_gates(catalog: dict) -> list[dict]:
 
     all_files = discover_all_skill_files()
     uncovered = sorted(str(p) for p in all_files if not covered(p))
-    gates = [{
+    gates = [tool_copy_drift(), {
         "id": "G1", "name": "覆盖率（全）",
         "status": "pass" if not uncovered else "fail",
         "detail": f"全盘发现 {len(all_files)} 个 SKILL.md，未被扫描根覆盖 {len(uncovered)} 个",
@@ -343,7 +473,7 @@ def run_gates(catalog: dict) -> list[dict]:
 
 
 def print_gates(gates: list[dict]) -> None:
-    mark = {"pass": "PASS", "warn": "WARN", "fail": "FAIL"}
+    mark = {"pass": "PASS", "warn": "WARN", "fail": "FAIL", "skip": "SKIP"}
     for g in gates:
         print(f"[gate {g['id']}] {mark[g['status']]}  {g['name']}: {g['detail']}")
         for it in g["items"][:5]:
@@ -451,7 +581,7 @@ description: >-
 
 ## Overview
 
-读取本机 skills catalog（由扫描器生成、带四道门禁），用共享打分引擎给出 2-4 个候选，
+读取本机 skills catalog（由扫描器生成、带五道门禁），用共享打分引擎给出 2-4 个候选，
 标注 AI 推荐但**由用户点选**，选定后才执行对应 SKILL.md。只读，不改任何 skill。
 
 **硬门禁（不可跳过）**：凡触发本 skill，必须先把看板弹到用户眼前，再在对话里给候选。
@@ -547,7 +677,7 @@ macOS/Linux 用 `$HOME`；Windows 上 `python` 缺失时换 `py`，Unix 用 `pyt
 | `python "<HOME>/.skill-picker/skillpick.py" serve` | ② 降级：起本地看板（后台运行） |
 | `<HOME>/.skill-picker/dashboard.html` | ③ 兜底：file:// 直开看板 |
 | `python "<HOME>/.skill-picker/skillpick.py" scan` | 刷新 catalog（新装 skill 后 / 超 7 天） |
-| `python "<HOME>/.skill-picker/skillpick.py" check` | 四道门禁体检（退出码 2=不可信） |
+| `python "<HOME>/.skill-picker/skillpick.py" check` | 五道门禁体检（退出码 2=不可信） |
 | `<HOME>/.skill-picker/catalog.md` | 人读/兜底用瘦身索引 |
 
 ## 只读铁律（不可违反）
@@ -695,21 +825,40 @@ def install_cursor_rule() -> str:
     return "unchanged" if old == CURSOR_RULE_TEMPLATE else ("updated" if old else "created")
 
 
+def copy_tools(src_dir: Path, data_dir: Path) -> list[str]:
+    """把工具文件拷到 data_dir，返回实际拷过去的文件名。
+
+    名单之外还要带上工具递归 import 到的本地模块，否则家目录那份一 import 就崩：
+    version.py 就是这么漏的（mcp_server 导它，TOOL_FILES 里没有）。
+    """
+    data_dir.mkdir(parents=True, exist_ok=True)
+    wanted = sorted({f for f in TOOL_FILES if (src_dir / f).exists()}
+                    | local_import_closure(TOOL_FILES, src_dir))
+    copied = []
+    for f in wanted:
+        src, dst = src_dir / f, data_dir / f
+        if not src.exists():
+            continue
+        # 从 ~/.skill-picker 自己跑 install 时 src 与 dst 是同一个文件，copy2 会抛
+        if not (dst.exists() and src.samefile(dst)):
+            shutil.copy2(src, dst)
+        copied.append(f)
+    return copied
+
+
 def install_meta_skill() -> None:
     # 工具自拷贝到 ~/.skill-picker/，meta-skill 全部用 ~ 路径，跨机器可用
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
     src_dir = Path(__file__).resolve().parent
-    for f in TOOL_FILES:
-        src = src_dir / f
-        if src.exists():
-            shutil.copy2(src, DATA_DIR / f)
+    copied = copy_tools(src_dir, DATA_DIR)
+    write_install_manifest(src_dir, copied)
     for host, target in INSTALL_TARGETS.items():
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(META_SKILL_TEMPLATE, encoding="utf-8")
         print(f"[install] {host}: {target}")
     register_mcp_all()
     print(f"[cursor-rule] {install_cursor_rule()}")
-    print(f"[install] 工具已自拷贝到 {DATA_DIR}（meta-skill 以 ~/.skill-picker 为准）")
+    print(f"[install] {len(copied)} 个工具文件已自拷贝到 {DATA_DIR}"
+          f"（meta-skill 以 ~/.skill-picker 为准，清单写入 {INSTALL_MANIFEST.name}）")
 
 
 # ---------------------------------------------------------------- CLI
@@ -930,8 +1079,9 @@ def main() -> None:
     elif cmd == "serve":
         cmd_serve(sys.argv[2:])
     elif cmd == "install":
-        cmd_scan()
+        # 先刷副本再扫：这样 G0 比的是装完之后的状态，门禁也才落在输出末尾（AGENTS.md 的口径）
         install_meta_skill()
+        cmd_scan()
     elif cmd == "report":
         cmd_report()
     else:

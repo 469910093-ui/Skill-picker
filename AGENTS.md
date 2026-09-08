@@ -15,7 +15,7 @@
 > - **理技能**：同名漂移、功能重叠自动圈出，红色感叹号提醒（只提示，不代删）
 > - **本地 dashboard**：单文件 HTML，三 tab（找技能 / 理技能 / **去 GitHub 发现**）
 > - **本机无解时**：切到「去 GitHub 发现」（skill-feed lite 子页，无关注/发布/个人后台）→ 打开 GitHub 自行安装 → 再 `scan`
-> - **四道门禁**：覆盖率、解析质量、漂移、匹配黄金用例，每次扫描强制自检
+> - **五道门禁**：工具副本、覆盖率、解析质量、漂移、匹配黄金用例，每次扫描强制自检
 > - **找/理技能 100% 本地**：无服务器、无账号；发现子页数据来自本机 skill-feed 或公开 embed
 >
 > 安装大约 1 分钟。
@@ -28,14 +28,18 @@ cd skill-picker
 python skillpick.py install
 ```
 
-`install` 会：扫描全部 skill 目录 → 生成 `~/.skill-picker/catalog.md` + `dashboard.html`
+`install` 会：工具自拷贝到 `~/.skill-picker/`（此后一切命令用 `~` 路径，与克隆目录解耦）
 → 把 meta-skill 装进四宿主（`~/.cursor/skills`、`~/.claude/skills`、`~/.agents/skills`、
-`~/.openclaw/skills`）→ 工具自拷贝到 `~/.skill-picker/`（此后一切命令用 `~` 路径，与克隆目录解耦）。
+`~/.openclaw/skills`）→ 扫描全部 skill 目录 → 生成 `~/.skill-picker/catalog.md` + `dashboard.html`。
 
 ## Step 2 — 检查门禁输出
 
-安装输出末尾有四道门禁。逐条向用户解释：
+安装输出末尾有五道门禁。逐条向用户解释：
 
+- **G0 工具副本 FAIL**：`~/.skill-picker` 里的工具比克隆目录旧，或者缺文件。产品的真实
+  调用路径是家目录那份（meta-skill、MCP、catalog.md 写的都是它），而**只有 `install` 会
+  刷新它，`scan` 不会**——所以 `git pull` 之后必须重跑 `python skillpick.py install`。
+  **这不是引擎回归，别去报 issue**；G1–G4 此时的结论也可能来自旧代码，先修 G0 再看它们。
 - **G1 覆盖率 FAIL**：本机有 skill 目录没被扫到。把输出里列出的目录加进
   `~/.skill-picker/config.json`：
 
@@ -66,7 +70,8 @@ python skillpick.py install
 - 纯本地（找/理）：数据只写 `~/.skill-picker/`，不修改任何已有 skill 文件
 - 发现子页：`discover.py` 同步 `~/.skill-picker/discover.html`（来自 `~/.skill-feed/feed.lite.html`）；
   未同步时可回退公开 `embed.html`
-- 更新：`git pull` 后重跑 `python skillpick.py install`
+- 更新：`git pull` 后重跑 `python skillpick.py install`（`scan` 不刷工具副本，只有 `install` 会；
+  忘了重装会被 G0 拦下来）
 - 刷新索引（装了新 skill 后）：`python ~/.skill-picker/skillpick.py scan`
 - 会话内候选检索（meta-skill 用，与页面同一引擎）：
   `python ~/.skill-picker/skillpick.py match "意图" --top 4 --json`
