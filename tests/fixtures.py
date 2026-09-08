@@ -10,6 +10,21 @@ import matching  # noqa: E402
 RULES = matching.load_rules()
 
 
+def build_test_index(skills=None, rules=None, translations=None):
+    """测试专用建索引入口：默认不吃本机译文库。
+
+    `matching.build_index` 的 translations 默认值是「读盘」——产品路径需要它，
+    否则 CLI 与看板会索引到不同文本。但 fixture 里的 work-report、video-use
+    等名字在真实 translations.json 里有条目，走默认值会让测试悄悄吃到真实译文，
+    结果随译文库变动而漂移。所以测试一律显式传 {}。
+    """
+    return matching.build_index(
+        [dict(s) for s in (skills if skills is not None else FIXTURE_SKILLS)],
+        rules or RULES,
+        translations if translations is not None else {},
+    )
+
+
 def _skill(name, desc, kw="", host="claude-code", dir_name=None):
     primary, labels = matching.categorize(name, desc, RULES)
     return {

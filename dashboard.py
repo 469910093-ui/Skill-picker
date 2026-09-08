@@ -24,8 +24,6 @@ import matching
 DATA_DIR = Path.home() / ".skill-picker"
 CATALOG_JSON = DATA_DIR / "catalog.json"
 DASHBOARD_HTML = DATA_DIR / "dashboard.html"
-TRANSLATIONS_PATH = Path(__file__).resolve().parent / "translations.json"
-
 # 分类名双语
 CAT_EN = {
     "飞书/Lark 办公": "Feishu / Lark Office",
@@ -44,17 +42,10 @@ CAT_EN = {
 GATE_EN = {"G1": "Coverage", "G2": "Parse quality", "G3": "Drift", "G4": "Golden queries"}
 
 
-def _is_zh(text: str) -> bool:
-    cjk = len(re.findall(r"[\u4e00-\u9fff]", text))
-    return cjk >= max(6, len(text) * 0.12)
-
-
-def load_translations() -> dict:
-    if TRANSLATIONS_PATH.exists():
-        data = json.loads(TRANSLATIONS_PATH.read_text(encoding="utf-8"))
-        data.pop("_comment", None)
-        return data
-    return {}
+# 双语判定与拼接收归 matching.py：索引口径必须与 CLI / meta-skill 完全一致，
+# 各写一份就是两套索引，同一个查询在看板和会话里会给出不同答案。
+_is_zh = matching.is_zh
+load_translations = matching.load_translations
 
 HOST_LABELS = {
     "claude-code": ("Claude Code", "#d97757"),
@@ -302,11 +293,17 @@ function tokenize(s, {query=false} = {}) {
 
 // 预处理字段 token + IDF；描述用中英双语一起建索引（中文意图也能打中英文 skill，反之亦然）
 const DF = new Map();
+// 双语拼接口径必须与 matching.py 的 bilingual() 逐字一致：缺译文时两栏是同一段
+// 文字，拼两遍虽然 token 集合不变，但 _dt 会翻倍，留着就是等哪天出分歧
+const idxDesc = s => {
+  const zh = s.descZh || '', en = s.descEn || '';
+  return en && en !== zh ? zh + ' ' + en : zh;
+};
 SKILLS.forEach(s => {
   s._name = tokenize(s.name);
-  s._desc = tokenize((s.descZh || '') + ' ' + (s.descEn || ''));
+  s._desc = tokenize(idxDesc(s));
   s._kw = tokenize(s.kw || ''); s._cat = norm(s.cat);
-  s._nt = norm(s.name); s._dt = norm((s.descZh || '') + ' ' + (s.descEn || '')); s._kt = norm(s.kw || '');
+  s._nt = norm(s.name); s._dt = norm(idxDesc(s)); s._kt = norm(s.kw || '');
   new Set([...s._name, ...s._desc, ...s._kw]).forEach(t => DF.set(t, (DF.get(t) || 0) + 1));
 });
 const byName = new Map(SKILLS.map(s => [s.name, s]));
@@ -327,7 +324,13 @@ const STR = {
        mt:'AI-translated; the SKILL.md is the source of truth'}
 };
 let LANG = localStorage.getItem('sp-lang') || 'zh';
-const sDesc = s => (LANG === 'zh' ? s.descZh : s.descEn) || s.desc;
+// payload 送的是全文（索引要），推荐卡只展示开头一段——最长的描述有 1000 字，
+// 整段铺进卡片会把评分条和「匹配依据」挤出屏幕
+const DESC_SHOWN = 220;
+const sDesc = s => {
+  const t = (LANG === 'zh' ? s.descZh : s.descEn) || s.desc || '';
+  return t.length > DESC_SHOWN ? t.slice(0, DESC_SHOWN) + '…' : t;
+};
 const sMt = s => LANG === 'zh' ? s.mtZh : s.mtEn;
 const sCat = s => LANG === 'zh' ? s.cat : s.catEn;
 const N = SKILLS.length;
@@ -838,15 +841,13 @@ def build_dashboard() -> Path:
     # 双语描述：原文缺哪种语言就用译文库补齐，缺译文回退原文并打 mt 标
     translations = load_translations()
 
-    def bilingual(m):
-        orig = m["description"]
-        entry = translations.get(m["dir_name"].lower(), {})
-        if _is_zh(orig):
-            return orig, entry.get("en") or orig, False, bool(entry.get("en"))
-        return entry.get("zh") or orig, orig, bool(entry.get("zh")), False
-
     for m in merged:
-        m["desc_zh"], m["desc_en"], m["mt_zh"], m["mt_en"] = bilingual(m)
+        m["desc_zh"], m["desc_en"] = matching.bilingual(m, translations)
+        # mt_* 只标「这一栏是机翻」，和文本内容无关，所以不进共享函数
+        entry = translations.get(m["dir_name"].lower(), {})
+        zh_orig = _is_zh(m["description"])
+        m["mt_zh"] = not zh_orig and bool(entry.get("zh"))
+        m["mt_en"] = zh_orig and bool(entry.get("en"))
 
     # 场景分区（合并后的条目；多端副本一张卡、宿主 label 逐一展示）
     by_cat: dict[str, list[dict]] = {}
@@ -886,12 +887,16 @@ def build_dashboard() -> Path:
             "name": m["name"],
             # 并列兜底排序用的稳定键，必须和 matching.py 用的是同一个字段
             "dir": m["dir_name"],
-            "desc": m["description"][:220],
-            "descZh": m["desc_zh"][:220], "descEn": m["desc_en"][:220],
+            # 索引字段一律送全文。此前 desc 截 220 / kw 截 300，切掉了半数 skill
+            # 的内容（146/280 描述超 220、210/280 关键词超 300，共丢 4136 个 token），
+            # 于是同一个查询在看板和 CLI 上给出不同答案。展示侧的长度限制见 JS 的
+            # sDesc()——截断是展示问题，不该反过来削索引。
+            "desc": m["description"],
+            "descZh": m["desc_zh"], "descEn": m["desc_en"],
             "mtZh": m["mt_zh"], "mtEn": m["mt_en"],
             "cat": m["category"], "catEn": CAT_EN.get(m["category"], m["category"]),
             "cats": m.get("categories", [m["category"]]),
-            "kw": m["keywords"][:300],
+            "kw": m["keywords"],
             "hosts": [[HOST_LABELS.get(h, (h, "#888"))[0], HOST_LABELS.get(h, (h, "#888"))[1]]
                       for h in m["hosts"]],
             "warn": warn_text(m),

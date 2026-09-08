@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fixtures import FIXTURE_SKILLS  # noqa: E402
+from fixtures import FIXTURE_SKILLS, build_test_index  # noqa: E402
 
 import matching  # noqa: E402
 import mcp_server  # noqa: E402
@@ -24,7 +24,7 @@ class _FixtureServer(mcp_server.McpServer):
         self._catalog = {"skills": FIXTURE_SKILLS, "gates": [
             {"id": "G1", "status": "pass", "detail": "fixture"},
         ]}
-        self._index = matching.build_index(FIXTURE_SKILLS)
+        self._index = build_test_index()
 
 
 class TestMcpProtocol(unittest.TestCase):

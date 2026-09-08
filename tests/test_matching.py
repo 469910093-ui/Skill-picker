@@ -8,13 +8,14 @@
 
 import json
 import random
+import re
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from fixtures import FIXTURE_SKILLS, RULES
+from fixtures import FIXTURE_SKILLS, RULES, build_test_index
 
 import matching
 
@@ -22,7 +23,7 @@ import matching
 class TestGoldenMatching(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.index = matching.build_index(FIXTURE_SKILLS, RULES)
+        cls.index = build_test_index(FIXTURE_SKILLS)
 
     def _top(self, query, n=4):
         return [r["name"] for r in matching.match(self.index, query, top=n)]
@@ -84,7 +85,7 @@ class TestGoldenMatching(unittest.TestCase):
 class TestMatchMechanics(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.index = matching.build_index(FIXTURE_SKILLS, RULES)
+        cls.index = build_test_index(FIXTURE_SKILLS)
 
     def test_query_tokenize_no_single_cjk(self):
         toks = matching.tokenize("设计", query=True)
@@ -130,7 +131,7 @@ class TestGrabBagDescription(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.index = matching.build_index([dict(s) for s in FIXTURE_SKILLS], RULES)
+        cls.index = build_test_index(FIXTURE_SKILLS, RULES)
 
     def _find(self, query, name):
         for r in matching.match(self.index, query, top=len(FIXTURE_SKILLS)):
@@ -182,7 +183,7 @@ class TestFigjamIsNotDesign(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.index = matching.build_index(FIXTURE_SKILLS, RULES)
+        cls.index = build_test_index(FIXTURE_SKILLS)
 
     def test_figjam_not_in_design_expansion(self):
         for q in ("设计", "平面设计"):
@@ -214,12 +215,12 @@ class TestTieOrderIsDeterministic(unittest.TestCase):
         for seed in range(16):
             skills = list(FIXTURE_SKILLS)
             random.Random(seed).shuffle(skills)
-            index = matching.build_index([dict(s) for s in skills], RULES)
+            index = build_test_index(skills, RULES)
             seen.add(tuple(r["dir_name"] for r in matching.match(index, "设计", top=6)))
         self.assertEqual(len(seen), 1, f"输入顺序改变了 topN，出现 {len(seen)} 种结果: {seen}")
 
     def test_tied_entries_are_ordered_by_dir_name(self):
-        index = matching.build_index([dict(s) for s in FIXTURE_SKILLS], RULES)
+        index = build_test_index(FIXTURE_SKILLS, RULES)
         ranked = matching.match(index, "设计", top=len(FIXTURE_SKILLS))
         groups: dict[float, list] = {}
         for r in ranked:
@@ -233,7 +234,7 @@ class TestTieOrderIsDeterministic(unittest.TestCase):
         for seed in range(8):
             skills = list(FIXTURE_SKILLS)
             random.Random(seed).shuffle(skills)
-            index = matching.build_index([dict(s) for s in skills], RULES)
+            index = build_test_index(skills, RULES)
             failed = [g for g in matching.run_golden(index, RULES) if g["status"] == "fail"]
             self.assertEqual(failed, [], f"seed={seed} 下黄金用例失败: {failed}")
 
@@ -282,7 +283,7 @@ class TestFieldHitFloorIsHonoured(unittest.TestCase):
     def _score(self, floor, name, query="剪视频"):
         rules = json.loads(json.dumps(RULES))
         rules["weights"]["field_hit_floor"] = floor
-        index = matching.build_index([dict(s) for s in FIXTURE_SKILLS], rules)
+        index = build_test_index(FIXTURE_SKILLS, rules)
         for r in matching.match(index, query, top=len(FIXTURE_SKILLS)):
             if r["name"] == name:
                 return r["score"]
@@ -310,6 +311,11 @@ class TestEnginesAgreeNumerically(unittest.TestCase):
 
     QUERIES = ["设计", "剪视频", "写周报", "figma", "code connect", "画个图表",
                "写飞书文档", "做一个ppt"]
+    TRANSLATIONS = {
+        "video-use": {"zh": "对话式剪辑任意视频：转写、切分、调色、生成叠加动画、烧字幕"},
+        "work-report": {"en": "Scan local work directories and summarise recent commits "
+                              "into a structured Chinese work report, weekly or daily."},
+    }
 
     @classmethod
     def setUpClass(cls):
@@ -327,17 +333,18 @@ class TestEnginesAgreeNumerically(unittest.TestCase):
         scoring = cut("  const qToks = tokenize(q, {query: true});", ".slice(0, 4);",
                       keep_end=True)
 
-        skills = [dict(s) for s in FIXTURE_SKILLS]
-        merged = matching.merge_copies(skills)
+        # 用假译文库，但必须两个方向都覆盖到（中文原文配英译、英文原文配中译），
+        # 否则 bilingual() 里的分支只走一半，双语口径的分歧测不出来
+        cls.index = build_test_index(translations=cls.TRANSLATIONS)
         js_skills = [{
             "name": m["name"], "dir": m["dir_name"],
-            # 与 Python 索引对齐：那边只吃 description 原文和全量 keywords。
-            # 真实 dashboard 喂的是「中译+英译」各截 220，与 CLI 本就不同源——
-            # 那是 payload 的问题，不该混进算法一致性的判定里。
-            "descZh": m["description"], "descEn": "",
+            # 逐字复刻 build_dashboard 里 js_data 的构造：双语拼接走共享的
+            # matching.bilingual（索引时已写入 desc_zh/desc_en），且一律送全文。
+            # 这里改回截断或改回单语，下面的对数就会挂——那正是它要守的东西。
+            "descZh": m["desc_zh"], "descEn": m["desc_en"],
             "cat": m["category"], "cats": m.get("categories", [m["category"]]),
             "kw": m["keywords"],
-        } for m in merged]
+        } for m in cls.index.skills]
         js_rules = {k: RULES[k] for k in
                     ("syn", "weak_syn", "design_triggers", "design_fallback",
                      "stopwords", "weights")}
@@ -361,7 +368,6 @@ class TestEnginesAgreeNumerically(unittest.TestCase):
         if proc.returncode:
             raise AssertionError(f"JS 引擎跑挂了，先修它：\n{proc.stderr[-1500:]}")
         cls.js_out = json.loads(proc.stdout)
-        cls.index = matching.build_index(skills, RULES)
 
     def _py_top(self, q):
         floor = RULES["weights"]["min_score"]
@@ -389,6 +395,101 @@ class TestEnginesAgreeNumerically(unittest.TestCase):
         """守住 harness 本身：切片没切到东西时上面两条会空跑成绿。"""
         self.assertTrue(any(self.js_out[q] for q in self.QUERIES),
                         "JS 侧一条都没排出来，切片多半没切对")
+
+    def test_the_fake_translations_actually_reach_the_index(self):
+        """假译文若没喂进去，双语这一半就没在测，上面的对数会退化成单语比对。"""
+        vu = next(s for s in self.index.skills if s["name"] == "video-use")
+        self.assertIn("剪辑", vu["desc_zh"], "英文 skill 应拿到中译")
+        self.assertIn("对话式剪辑", vu["_dt"], "中译必须进索引文本，否则中文意图打不中")
+        wr = next(s for s in self.index.skills if s["name"] == "work-report")
+        self.assertIn("weekly", wr["_dt"], "中文 skill 的英译必须进索引")
+
+
+class TestIndexTextIsNotTruncated(unittest.TestCase):
+    """索引字段必须送全文。
+
+    截断曾切掉半数 skill 的内容（146/280 描述超 220、210/280 关键词超 300，
+    共丢 4136 个 token），而 CLI 用的是全文，于是同一个查询在看板和会话内
+    给出不同答案。展示需要短文本是另一件事，在 JS 的 sDesc() 里截。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        root = Path(__file__).resolve().parent.parent
+        cls.src = (root / "dashboard.py").read_text(encoding="utf-8")
+
+    def test_payload_does_not_slice_the_indexed_fields(self):
+        for field in ('m["desc_zh"]', 'm["desc_en"]', 'm["keywords"]', 'm["description"]'):
+            with self.subTest(field=field):
+                self.assertNotRegex(
+                    self.src, re.escape(field) + r"\[:\d+\]",
+                    f"{field} 又被截断了；索引要全文，展示长度请在 sDesc() 里限")
+
+    def test_display_still_caps_the_length(self):
+        """全文进 payload 后，推荐卡必须自己截，否则 1000 字描述会撑爆卡片。"""
+        self.assertIn("DESC_SHOWN", self.src)
+        self.assertRegex(self.src, r"t\.slice\(0, DESC_SHOWN\)")
+
+    def test_dashboard_reuses_the_shared_bilingual_helpers(self):
+        """看板不许自己再写一份中文判定或译文加载。
+
+        `_is_zh` 的阈值决定哪一栏算原文、哪一栏算译文，也就决定索引文本；
+        两处各写一份，同一个 skill 在看板和 CLI 上会被判成不同语言。
+        """
+        import dashboard
+        self.assertIs(dashboard._is_zh, matching.is_zh)
+        self.assertIs(dashboard.load_translations, matching.load_translations)
+
+    def test_both_sides_concat_bilingual_the_same_way(self):
+        """缺译文时不能把同一段文字拼两遍——token 集合不变，但 _dt 会翻倍。"""
+        self.assertIn("en && en !== zh ? zh + ' ' + en : zh", self.src)
+        py = (Path(__file__).resolve().parent.parent / "matching.py").read_text(encoding="utf-8")
+        self.assertIn('desc = zh if en == zh else f"{zh} {en}"', py)
+
+
+class TestBilingualIndexing(unittest.TestCase):
+    """双语索引：中文意图要能打中只写英文描述的 skill，反之亦然。"""
+
+    # 查询词刻意选「调色」：它不在 rules.json 的近义词表里，所以命中只能来自
+    # 译文本身。用「剪辑」「字幕」这类表里已有的词，近义词扩展会自己桥到英文
+    # 描述上，测试就变成绿的但什么也没证明。
+    TR = {"video-use": {"zh": "对话式剪辑任意视频：转写、切分、调色、烧字幕"}}
+    QUERY = "调色"
+
+    def test_the_query_has_no_synonym_bridge(self):
+        """前提检查：这个词一旦进了近义词表，下面那条测试就失去意义。"""
+        blob = " ".join(list(RULES["syn"]) + list(RULES["syn"].values()))
+        self.assertNotIn(self.QUERY, blob,
+                         f"「{self.QUERY}」进了近义词表，请换一个无桥的词")
+
+    def test_chinese_translation_makes_an_english_skill_reachable(self):
+        mono = build_test_index()
+        bi = build_test_index(translations=self.TR)
+        self.assertNotIn("video-use",
+                         [r["name"] for r in matching.match(mono, self.QUERY)],
+                         "无译文时本来打不中，这条测试的前提就在这")
+        self.assertIn("video-use",
+                      [r["name"] for r in matching.match(bi, self.QUERY)],
+                      "喂了中译却还打不中，双语索引没生效")
+
+    def test_missing_translation_falls_back_to_the_original(self):
+        zh, en = matching.bilingual({"description": "扫描本地工作目录并汇总近期改动",
+                                     "dir_name": "nope"}, {})
+        self.assertEqual(zh, en, "缺译文时两栏都应退回原文")
+
+    def test_translations_are_keyed_by_dir_name_lowercased(self):
+        s = {"description": "Edit any video by conversation.", "dir_name": "Video-Use"}
+        zh, _ = matching.bilingual(s, {"video-use": {"zh": "对话式剪辑"}})
+        self.assertEqual(zh, "对话式剪辑", "键要折小写，否则大小写不同就查不到译文")
+
+    def test_the_default_reads_the_real_translation_file(self):
+        """产品路径必须默认吃同一份译文库；默认值一变，CLI 与看板就又分家了。"""
+        import inspect
+        sig = inspect.signature(matching.build_index)
+        self.assertIsNone(sig.parameters["translations"].default,
+                          "默认值要保持 None（= 读盘），别改成 {}")
+        src = inspect.getsource(matching.build_index)
+        self.assertIn("load_translations()", src)
 
 
 if __name__ == "__main__":

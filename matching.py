@@ -14,10 +14,39 @@ from pathlib import Path
 from typing import Optional
 
 RULES_PATH = Path(__file__).resolve().parent / "rules.json"
+TRANSLATIONS_PATH = Path(__file__).resolve().parent / "translations.json"
 
 
 def load_rules(path: Optional[Path] = None) -> dict:
     return json.loads((path or RULES_PATH).read_text(encoding="utf-8"))
+
+
+def load_translations(path: Optional[Path] = None) -> dict:
+    p = path or TRANSLATIONS_PATH
+    if not p.exists():
+        return {}
+    data = json.loads(p.read_text(encoding="utf-8"))
+    data.pop("_comment", None)
+    return data
+
+
+def is_zh(text: str) -> bool:
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", text))
+    return cjk >= max(6, len(text) * 0.12)
+
+
+def bilingual(skill: dict, translations: dict) -> tuple[str, str]:
+    """(中文描述, 英文描述)。缺译文时两边都退回原文。
+
+    索引必须吃双语拼接：中文意图要能打中只写了英文描述的 skill，反之亦然。
+    这个函数是索引侧和展示侧共用的唯一入口——各写一份就是两套索引口径，
+    看板和会话内会对同一个查询给出不同答案。
+    """
+    orig = skill["description"]
+    entry = translations.get(skill.get("dir_name", "").lower(), {})
+    if is_zh(orig):
+        return orig, (entry.get("en") or orig)
+    return (entry.get("zh") or orig), orig
 
 
 # ---------------------------------------------------------------- 分词
@@ -112,16 +141,20 @@ def merge_copies(skills: list) -> list:
 # ---------------------------------------------------------------- 打分
 
 class MatchIndex:
-    def __init__(self, merged: list, rules: dict):
+    def __init__(self, merged: list, rules: dict, translations: Optional[dict] = None):
         self.rules = rules
         self.skills = merged
+        self.translations = translations or {}
         self.df: dict[str, int] = {}
         for s in merged:
+            zh, en = bilingual(s, self.translations)
+            s["desc_zh"], s["desc_en"] = zh, en
+            desc = zh if en == zh else f"{zh} {en}"
             s["_name"] = tokenize(s["name"])
-            s["_desc"] = tokenize(s["description"])
+            s["_desc"] = tokenize(desc)
             s["_kw"] = tokenize(s.get("keywords", ""))
             s["_nt"] = norm(s["name"]).replace(" ", "")
-            s["_dt"] = norm(s["description"]).replace(" ", "")
+            s["_dt"] = norm(desc).replace(" ", "")
             for t in s["_name"] | s["_desc"] | s["_kw"]:
                 self.df[t] = self.df.get(t, 0) + 1
         self.n = max(len(merged), 1)
@@ -130,9 +163,17 @@ class MatchIndex:
         return math.log(1 + self.n / self.df[t]) if t in self.df else 0.0
 
 
-def build_index(skills: list, rules: Optional[dict] = None) -> MatchIndex:
+def build_index(skills: list, rules: Optional[dict] = None,
+                translations: Optional[dict] = None) -> MatchIndex:
+    """translations 传 None 时读本机 translations.json；显式传 {} 可关掉双语。
+
+    默认读盘而不是留空：CLI、meta-skill、看板必须索引同一份文本，
+    默认值一旦不同，同一个查询在两处就会给出不同答案。
+    """
     rules = rules or load_rules()
-    return MatchIndex(merge_copies(skills), rules)
+    if translations is None:
+        translations = load_translations()
+    return MatchIndex(merge_copies(skills), rules, translations)
 
 
 def expand_intent(q_toks: set, rules: dict, q_compact: str = "") -> list:
