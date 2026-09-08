@@ -13,6 +13,7 @@
 
 import io
 import json
+import re
 import sys
 import unittest
 from contextlib import redirect_stdout
@@ -294,12 +295,45 @@ class ManifestTest(unittest.TestCase):
 
 
 class GateStatusRenderingTest(unittest.TestCase):
-    """G0 引入了第四种状态 skip，两个渲染处都是按 status 直接下标的。"""
+    """G0 引入了第四种状态 skip，而三处渲染都是按 status 直接下标的：
+    命令行 print_gates、catalog.md 的 emoji、看板的配色与符号。catalog.md 那处
+    当初就漏了 —— 它不会在 G0 返回 pass 时暴露，只在真出现 skip 那天崩。"""
 
-    def test_dashboard_covers_every_status(self):
+    def test_every_render_site_covers_every_status(self):
         for status in STATUSES:
+            self.assertIn(status, skillpick.GATE_LABEL)
+            self.assertIn(status, skillpick.GATE_EMOJI)
             self.assertIn(status, dashboard.GATE_COLORS)
             self.assertIn(status, dashboard.GATE_MARK)
+
+    def test_no_render_site_inlines_its_own_status_map(self):
+        # 收归常量之前，三处各写一份，加状态时必漏
+        for path in (REPO / "skillpick.py", REPO / "dashboard.py"):
+            source = path.read_text(encoding="utf-8")
+            inline = re.findall(r'\{"pass":[^}]*\}\[', source)
+            self.assertEqual(inline, [], f"{path.name} 里还有就地拼的状态字典：{inline}")
+
+    def test_catalog_md_renders_every_status(self):
+        catalog = {
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "skill_count": 0,
+            "categories": {},
+            "duplicates": {"same_name": [], "overlapping": []},
+            "skills": [],
+            "gates": [{"id": "G0", "name": "工具副本", "status": s, "detail": f"detail-{s}",
+                       "items": [], "action": ""} for s in STATUSES],
+        }
+        with TemporaryDirectory() as tmp:
+            target = Path(tmp) / "catalog.md"
+            original = skillpick.CATALOG_MD
+            skillpick.CATALOG_MD = target
+            try:
+                skillpick.write_catalog_md(catalog)   # 缺键会 KeyError
+            finally:
+                skillpick.CATALOG_MD = original
+            text = target.read_text(encoding="utf-8")
+        for status in STATUSES:
+            self.assertIn(f"detail-{status}", text)
 
     def test_dashboard_has_an_english_label_for_g0(self):
         self.assertIn("G0", dashboard.GATE_EN)

@@ -50,8 +50,12 @@ SCAN_ROOTS = [
     (HOME / ".openclaw" / "skills", "openclaw"),
     (HOME / ".openclaw" / "workspace" / "skills", "openclaw"),
     (HOME / ".gemini" / "skills", "gemini"),
-    (HOME / ".config" / "opencode" / "skills", "opencode"),
+    # ~/.config 下的宿主不写死，见 discover_config_roots
 ]
+
+# ~/.config 下的 agent 宿主统一是 <host>/skills（opencode / crush / goose / devin …）。
+# 写死名单只会漏掉下一个新宿主：装了却扫不到，G1 报 FAIL，还得让用户手工补 extra_roots。
+CONFIG_HOST_BASE = HOME / ".config"
 
 # 覆盖率门禁的全盘发现范围：这些基目录下任何 SKILL.md 都必须被扫描根覆盖
 DISCOVER_BASES = [
@@ -59,7 +63,10 @@ DISCOVER_BASES = [
     HOME / ".codex", HOME / ".openclaw", HOME / ".gemini", HOME / ".config",
 ]
 PRUNE_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "venv", "dist", "build",
-              "terminals", "agent-transcripts", ".tmp", "tmp"}
+              "terminals", "agent-transcripts", ".tmp", "tmp",
+              # agent 的按项目暂存区（~/.cursor/projects/<id>/…）：里面是会话产物和解包出来的
+              # 构建中间物，不是装好的 skill。当成覆盖率缺口会永远修不完。
+              "projects"}
 
 # meta-skill 安装目标：四宿主
 INSTALL_TARGETS = {
@@ -71,10 +78,42 @@ INSTALL_TARGETS = {
 
 RULES = matching.load_rules()
 
+# 门禁状态的展示映射。三处渲染（命令行、catalog.md、看板）都按 status 直接下标，
+# 缺一个键就是崩：G0 引入 skip 时 catalog.md 那处就差点漏掉。
+GATE_LABEL = {"pass": "PASS", "warn": "WARN", "fail": "FAIL", "skip": "SKIP"}
+GATE_EMOJI = {"pass": "✅", "warn": "⚠️", "fail": "❌", "skip": "⏭️"}
+
+
+def discover_config_roots(base: Path | None = None) -> list[tuple[Path, str]]:
+    """按 <base>/<host>/skills 约定发现宿主，host 取宿主目录名。
+
+    也认多包一层的 <host>/<sub>/skills（kimchi 用的是 harness/skills）。只下探两层：
+    再深就会把项目暂存区里的东西也当成已装 skill。
+    """
+    base = base or CONFIG_HOST_BASE
+
+    def usable(d: Path) -> bool:
+        return d.is_dir() and not d.name.startswith(".") and d.name not in PRUNE_DIRS
+
+    def children(d: Path) -> list[Path]:
+        try:
+            return sorted(x for x in d.iterdir() if usable(x))
+        except OSError:
+            return []
+
+    if not base.is_dir():
+        return []
+    roots = []
+    for host in children(base):
+        for cand in [host / "skills"] + [sub / "skills" for sub in children(host)]:
+            if cand.is_dir():
+                roots.append((cand, host.name))
+    return roots
+
 
 def load_scan_roots() -> list[tuple[Path, str]]:
-    """内置扫描根 + 用户自定义目录（~/.skill-picker/config.json 的 extra_roots）。"""
-    roots = list(SCAN_ROOTS)
+    """内置扫描根 + ~/.config 下按约定发现的宿主 + 用户自定义（config.json 的 extra_roots）。"""
+    roots = list(SCAN_ROOTS) + discover_config_roots()
     if CONFIG_JSON.exists():
         try:
             cfg = json.loads(CONFIG_JSON.read_text(encoding="utf-8"))
@@ -82,7 +121,15 @@ def load_scan_roots() -> list[tuple[Path, str]]:
                 roots.append((Path(item["path"]), item.get("host", "custom")))
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             print(f"[warn] config.json 解析失败，忽略 extra_roots: {e}")
-    return roots
+    # 去重：同一个目录进两次，catalog 里每个 skill 就会多出一份「副本」，
+    # 连带把同名多份和漂移统计一起做脏
+    seen, unique = set(), []
+    for path, host in roots:
+        key = os.path.normcase(str(path))
+        if key not in seen:
+            seen.add(key)
+            unique.append((path, host))
+    return unique
 
 
 # ---------------------------------------------------------------- 扫描与解析
@@ -473,7 +520,7 @@ def run_gates(catalog: dict) -> list[dict]:
 
 
 def print_gates(gates: list[dict]) -> None:
-    mark = {"pass": "PASS", "warn": "WARN", "fail": "FAIL", "skip": "SKIP"}
+    mark = GATE_LABEL
     for g in gates:
         print(f"[gate {g['id']}] {mark[g['status']]}  {g['name']}: {g['detail']}")
         for it in g["items"][:5]:
@@ -512,7 +559,7 @@ def write_catalog_md(catalog: dict) -> None:
         "",
     ]
     for g in catalog.get("gates", []):
-        mark = {"pass": "✅", "warn": "⚠️", "fail": "❌"}[g["status"]]
+        mark = GATE_EMOJI[g["status"]]
         lines.append(f"- {mark} **{g['id']} {g['name']}** {g['status'].upper()}：{g['detail']}")
         if g["status"] != "pass" and g.get("action"):
             lines.append(f"  - 处理：{g['action']}")

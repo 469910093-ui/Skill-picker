@@ -11,6 +11,10 @@
   修好的回归会继续 FAIL，门禁再按 AGENTS.md 把用户打发去仓库报 issue。
   副本被就地改过（哈希 ≠ 安装时记录）单独报 WARN；无法定位克隆时 SKIP 而不是诬告
 - `install.json` 安装清单：记下副本来源目录与安装时哈希，家目录那份因此也能找到克隆做比对
+- `~/.config` 下的宿主改为按 `<host>/skills` 约定自动发现（也认多包一层的
+  `<host>/harness/skills`），host 取目录名。此前只写死了 `opencode`，本机后来冒出的
+  crush / devin / goose / kimchi 共 33 个 `SKILL.md` 全在扫描根之外、对匹配不可见，
+  且写死名单挡不住下一个新宿主
 - 拷贝范围改为 `TOOL_FILES ∪ 工具递归 import 到的本地模块`，并加仓库级测试断言这个闭包
   被 `TOOL_FILES` 覆盖（静态解析，含函数内的延迟 import）
 - 扩充会话唤起语：本机有没有…能力、你会…吗、帮我找找、哪个 skill 最适配、整理已装 skills 等口语
@@ -22,6 +26,11 @@
   证明不了「两边算出同一个数」
 
 ### Fixed
+- `catalog.md` 的门禁 emoji 映射缺 `skip` 键，G0 一旦无法定位克隆就会 KeyError 崩在
+  写 catalog 那一步。三处渲染（命令行 / catalog.md / 看板）各写一份状态字典，加状态时
+  必漏一处；现收归 `GATE_LABEL` / `GATE_EMOJI`，并加测试禁止就地再拼
+- 覆盖率地面真值把 agent 的按项目暂存区（`~/.cursor/projects/<id>/…`）算了进来：
+  那里是会话产物和解包出的构建中间物，不是装好的 skill，当成缺口永远修不完
 - `~/.skill-picker/mcp_server.py` 一启动就 `ModuleNotFoundError: version`：`version.py`
   从来没进 `TOOL_FILES`，而 `mcp_server` 导它。Cursor 规则的第一步正是调 MCP
   `skill_dashboard`，也就是说产品主路径一直是坏的，只能靠 CLI 兜底
