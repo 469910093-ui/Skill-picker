@@ -26,6 +26,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import install_api
 import installer
 import matching
 
@@ -38,7 +39,8 @@ INSTALL_MANIFEST = DATA_DIR / "install.json"
 INSTALLED_LEDGER = DATA_DIR / "installed.json"
 SELF_NAME = "skill-picker"
 TOOL_FILES = ["skillpick.py", "matching.py", "dashboard.py", "discover.py", "rules.json",
-              "translations.json", "mcp_server.py", "version.py", "installer.py"]
+              "translations.json", "mcp_server.py", "version.py", "installer.py",
+              "install_api.py"]
 MCP_SERVER_NAME = "skill-picker"
 
 # 扫描根目录 -> 宿主标签。存在才扫，不存在跳过。
@@ -1116,40 +1118,61 @@ def _under(path: str, root: str) -> bool:
     return os.path.normcase(path).startswith(prefix)
 
 
-def post_install_check(receipt: dict) -> int:
-    """装完体检：落盘一致 → 重扫 → 进 catalog → 五道门禁。返回建议退出码。
+def post_install_report(receipt: dict) -> dict:
+    """装完体检：落盘一致 → 重扫 → 进 catalog → 五道门禁。返回结构化结论。
 
     只有落盘校验失败才自动回滚：那说明我们刚写的东西已经不是我们写的了（磁盘、
     杀软、或者并发在改），留着比删掉危险。门禁 FAIL 不自动删——原因通常和这次安装
     无关，替用户删掉是越权。
+
+    CLI 和「装到本机」按钮共用这一份，避免两条路对同一次安装给出两种说法。
     """
+    out: dict = {"code": 0, "rolled_back": False, "verified": 0,
+                 "names": [], "twins": [], "gates_failed": []}
+
     states = installer.verify_receipt(receipt)
     broken = {rel: st for rel, st in states.items() if st != "ok"}
     if broken:
-        print(f"[check] 落盘校验不一致（{broken}），自动回滚")
         report = installer.remove_install(receipt, INSTALLED_LEDGER, force=True)
-        print(f"[check] 已回滚 {report['target']}")
-        return 2
-    print(f"[check] 落盘校验：{len(states)} 个文件与存证一致")
+        out.update(code=2, rolled_back=True, broken=broken, target=report["target"])
+        return out
+    out["verified"] = len(states)
 
     catalog = cmd_scan()
     mine = [s for s in catalog["skills"] if _under(s.get("path", ""), receipt["target"])]
     if not mine:
-        print(f"[check] 装好的 skill 没出现在 catalog 里：{receipt['target']}\n"
+        out.update(code=2, missing_from_catalog=True, target=receipt["target"])
+        return out
+    out["names"] = [s["name"] for s in mine]
+    out["twins"] = sorted({s["host"] for s in catalog["skills"]
+                           if s["name"] == mine[0]["name"]
+                           and not _under(s.get("path", ""), receipt["target"])})
+    out["gates_failed"] = [g["id"] for g in catalog["gates"] if g["status"] == "fail"]
+    if out["gates_failed"]:
+        out["code"] = 2
+    return out
+
+
+def post_install_check(receipt: dict) -> int:
+    """post_install_report 的打印壳。返回建议退出码。"""
+    report = post_install_report(receipt)
+    if report["rolled_back"]:
+        print(f"[check] 落盘校验不一致（{report['broken']}），自动回滚")
+        print(f"[check] 已回滚 {report['target']}")
+        return report["code"]
+    print(f"[check] 落盘校验：{report['verified']} 个文件与存证一致")
+    if report.get("missing_from_catalog"):
+        print(f"[check] 装好的 skill 没出现在 catalog 里：{report['target']}\n"
               f"        这个宿主不在扫描根内，把它加进 {CONFIG_JSON} 的 extra_roots")
-        return 2
-    print(f"[check] catalog 已收录：{', '.join(s['name'] for s in mine)}")
-    twins = {s["host"] for s in catalog["skills"]
-             if s["name"] == mine[0]["name"] and not _under(s.get("path", ""), receipt["target"])}
-    if twins:
-        print(f"[check] 同名 skill 另有 {len(twins)} 个宿主也有（{', '.join(sorted(twins))}），"
-              "看板「理技能」tab 看漂移")
-    failed = [g["id"] for g in catalog["gates"] if g["status"] == "fail"]
-    if failed:
-        print(f"[check] 门禁 FAIL：{', '.join(failed)}（不一定和这次安装有关）\n"
+        return report["code"]
+    print(f"[check] catalog 已收录：{', '.join(report['names'])}")
+    if report["twins"]:
+        print(f"[check] 同名 skill 另有 {len(report['twins'])} 个宿主也有"
+              f"（{', '.join(report['twins'])}），看板「理技能」tab 看漂移")
+    if report["gates_failed"]:
+        print(f"[check] 门禁 FAIL：{', '.join(report['gates_failed'])}（不一定和这次安装有关）\n"
               f"        要撤销这次安装：python {Path(__file__).name} remove {receipt['id']} --yes")
-        return 2
-    return 0
+    return report["code"]
 
 
 def cmd_add(argv: list[str]) -> None:
@@ -1292,15 +1315,40 @@ def cmd_report() -> None:
     print(CATALOG_MD.read_text(encoding="utf-8"))
 
 
+def serve_deps() -> "install_api.Deps":
+    """把 skillpick 这边的真实实现打包给 install_api（测试整组替换）。"""
+    import discover
+
+    return install_api.Deps(
+        roots=install_roots,
+        default_host=default_install_host,
+        known_skills=_known_skills,
+        ledger_path=INSTALLED_LEDGER,
+        local_index=lambda: discover.local_skill_index(_load_catalog_json() or {"skills": []}),
+        post_install=post_install_report,
+    )
+
+
+def _load_catalog_json() -> dict | None:
+    if not CATALOG_JSON.exists():
+        return None
+    try:
+        return json.loads(CATALOG_JSON.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def cmd_serve(argv: list[str]) -> None:
     """本地预览看板：127.0.0.1 固定段端口，占用则顺延；单实例绑定（不复用端口）。
 
     额外能力：
     - GET /api/pending_intent → 返回会话意图（MCP match/dashboard 写入）
+    - GET /api/session、POST /api/install/{plan,apply} → 「装到本机」按钮（见 install_api）
     - 打开 /dashboard.html 且无 ?q= 时，若有 pending 意图则 302 到 ?q=…（用户不用重输）
     """
     import http.server
     import socketserver
+    import threading
     import urllib.parse
 
     from mcp_server import load_pending_intent  # 延迟导入，与 CLI 共用落盘约定
@@ -1311,9 +1359,47 @@ def cmd_serve(argv: list[str]) -> None:
     if not (DATA_DIR / "dashboard.html").exists():
         cmd_scan()
 
+    api: dict = {}
+    # 安装要串行：两个安装并发跑，「同名不覆盖」的检查和真正写盘之间就有窗口。
+    # 静态文件不受这把锁影响——拉包要好几秒，锁住整个 server 会让看板像卡死。
+    install_lock = threading.Lock()
+
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(DATA_DIR), **kwargs)
+
+        def _json(self, status: int, body: dict) -> None:
+            raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            # 不发 Access-Control-Allow-Origin：跨源页面即便把请求送到了也读不走响应
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_POST(self):  # noqa: N802
+            path = urllib.parse.urlparse(self.path).path or "/"
+            handlers = {"/api/install/plan": "plan", "/api/install/apply": "apply"}
+            if path not in handlers:
+                self._json(404, {"ok": False, "error": "没有这个端点"})
+                return
+            svc: install_api.InstallApi = api["svc"]
+            try:
+                svc.guard(dict(self.headers.items()))
+                length = int(self.headers.get("Content-Length") or 0)
+                if length > install_api.MAX_BODY:
+                    raise install_api.ApiError(413, "请求体过大")
+                payload = svc.parse_body(self.rfile.read(length))
+                with install_lock:
+                    body = getattr(svc, handlers[path])(payload)
+            except install_api.ApiError as e:
+                self._json(e.status, e.body())
+                return
+            except Exception as e:  # noqa: BLE001 —— 本地服务，崩了要说人话不要吐栈
+                self._json(500, {"ok": False, "error": f"{type(e).__name__}: {e}"})
+                return
+            self._json(200, body)
 
         def log_message(self, fmt, *args):  # noqa: A003 —— 降噪
             if "/api/" in (args[0] if args else ""):
@@ -1331,14 +1417,15 @@ def cmd_serve(argv: list[str]) -> None:
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path or "/"
             if path == "/api/pending_intent":
-                intent = load_pending_intent()
-                body = json.dumps({"intent": intent}, ensure_ascii=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._json(200, {"intent": load_pending_intent()})
+                return
+            if path == "/api/session":
+                # 令牌只发给同源页面：这个响应没有 CORS 头，跨源 fetch 读不到 body
+                svc: install_api.InstallApi = api["svc"]
+                if str(self.headers.get("Host") or "") not in svc.hosts:
+                    self._json(403, {"ok": False, "error": "拒绝：请求不是发给本机看板的"})
+                    return
+                self._json(200, svc.session())
                 return
             if path in ("/", "/dashboard.html"):
                 qs = urllib.parse.parse_qs(parsed.query)
@@ -1361,17 +1448,23 @@ def cmd_serve(argv: list[str]) -> None:
                         return
             return super().do_GET()
 
+    class Server(socketserver.ThreadingTCPServer):
+        # 拉一个 zipball 要好几秒。单线程 server 会让这几秒里整个看板连 CSS 都加载
+        # 不出来，看着像卡死。安装本身另有 install_lock 串行。
+        daemon_threads = True
+
     httpd = None
     for port in range(base_port, base_port + 10):
         try:
             # 默认 allow_reuse_address=False：端口被占时直接失败顺延，杜绝双实例抢连接
-            httpd = socketserver.TCPServer(("127.0.0.1", port), Handler)
+            httpd = Server(("127.0.0.1", port), Handler)
             break
         except OSError:
             continue
     if httpd is None:
         print(f"[serve] {base_port}-{base_port + 9} 端口均被占用")
         sys.exit(1)
+    api["svc"] = install_api.InstallApi(port, serve_deps())
     print(f"[serve] http://127.0.0.1:{port}/dashboard.html  （Ctrl+C 停止）")
     try:
         httpd.serve_forever()

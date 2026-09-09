@@ -5,6 +5,19 @@
 ## [Unreleased]
 
 ### Added
+- 看板里的「装到本机」：`serve` 起的本机看板现在能直接装 skill，不用回终端敲命令。
+  新增 `install_api.py`，暴露 `/api/session`、`/api/install/plan`、`/api/install/apply`
+  三个端点，复用 `installer.py` 那一套（同名不覆盖、先计划后写盘、来源存证、装完体检、
+  失败回滚），只是把出口从 CLI 换成同源 HTTP。
+  这条链路有写盘权限，所以四道门全开着，缺一道就 403（且不告诉调用方缺的是哪道）：
+  - **Host 白名单**：只认 `127.0.0.1:<port>` / `localhost:<port>`，挡 DNS rebinding
+  - **Origin 精确匹配**：不做前缀比较，挡 CSRF
+  - **自定义令牌头** `X-Skillpick-Token`：`/api/session` 现取，跨站拿不到
+  - **`Content-Type: application/json`**：强制走 CORS 预检，简单请求进不来
+- 计划缓存：`plan` 出的计划存在内存里，`apply` 只认 `plan_id`，用完即焚——
+  确认的必须是刚才看过的那份，且同一份不能重放
+- `serve` 改用 `ThreadingTCPServer`：装 skill 要拉网、要重扫，单线程会把静态页一起卡死。
+  写操作本身用一把锁串起来
 - 一键安装（免费层）：`add <github 地址>` 从 GitHub 装 skill，`installed` 看装过什么，
   `remove <id>` 卸载回滚。零依赖实现——codeload 的 zipball + 标准库 `zipfile`，
   `HEAD` 直接可用不必打 API，提交号从 zip 注释里白拿。五条硬约束：
@@ -49,6 +62,8 @@
   发现 tab 未同步时会加载公开 embed——三条分开写清楚，别让一句「无外部 API」兜全部
 
 ### Fixed
+- `install_api.py` 从未进 `TOOL_FILES`，家目录那份 `serve` 会 `ModuleNotFoundError`
+  起不来。G0 门禁当场抓住了——这正是它存在的理由
 - `catalog.md` 的门禁 emoji 映射缺 `skip` 键，G0 一旦无法定位克隆就会 KeyError 崩在
   写 catalog 那一步。三处渲染（命令行 / catalog.md / 看板）各写一份状态字典，加状态时
   必漏一处；现收归 `GATE_LABEL` / `GATE_EMOJI`，并加测试禁止就地再拼
